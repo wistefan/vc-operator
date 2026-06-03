@@ -1,5 +1,6 @@
 /*
-Copyright 2026.
+Copyright 2026 Seamless Middleware Technologies S.L and/or its affiliates
+and other contributors as indicated by the @author tags.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,8 +32,7 @@ const (
 	certmanagerVersion = "v1.20.2"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 
-	defaultKindBinary  = "kind"
-	defaultKindCluster = "kind"
+	defaultK3sBinary = "k3s"
 )
 
 func warnError(err error) {
@@ -133,19 +133,25 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
-func LoadImageToKindClusterWithName(name string) error {
-	cluster := defaultKindCluster
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
+// LoadImageToK3sCluster saves a local docker image and imports it into the k3s cluster
+// using the k3s ctr images import command.
+func LoadImageToK3sCluster(name string) error {
+	// Save the docker image to a temporary tar file
+	imageTar := "/tmp/k3s-e2e-image.tar"
+	saveCmd := exec.Command("docker", "save", name, "-o", imageTar)
+	if _, err := Run(saveCmd); err != nil {
+		return fmt.Errorf("failed to save docker image %q: %w", name, err)
 	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
-	kindBinary := defaultKindBinary
-	if v, ok := os.LookupEnv("KIND"); ok {
-		kindBinary = v
+	defer os.Remove(imageTar)
+
+	k3sBinary := defaultK3sBinary
+	if v, ok := os.LookupEnv("K3S"); ok {
+		k3sBinary = v
 	}
-	cmd := exec.Command(kindBinary, kindOptions...)
-	_, err := Run(cmd)
+
+	// Import the image into k3s containerd
+	importCmd := exec.Command("sudo", k3sBinary, "ctr", "images", "import", imageTar)
+	_, err := Run(importCmd)
 	return err
 }
 

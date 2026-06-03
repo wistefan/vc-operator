@@ -2,7 +2,8 @@
 // +build e2e
 
 /*
-Copyright 2026.
+Copyright 2026 Seamless Middleware Technologies S.L and/or its affiliates
+and other contributors as indicated by the @author tags.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -39,7 +40,7 @@ var (
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager.
+// The default setup requires k3s and CertManager.
 //
 // To enable kubectl kuberc (use custom kubectl configurations), set: KUBECTL_KUBERC=true
 // By default, kuberc is disabled to ensure consistent test behavior across different environments.
@@ -56,11 +57,11 @@ var _ = BeforeSuite(func() {
 	_, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind,
+	// TODO(user): If you want to change the e2e test vendor from k3s,
 	// ensure the image is built and available, then remove the following block.
-	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+	By("loading the manager image on k3s")
+	err = utils.LoadImageToK3sCluster(managerImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into k3s")
 
 	configureKubectlKubeRC()
 	setupCertManager()

@@ -47,20 +47,19 @@ echo "------------------------------------"
 echo "Installing development tools..."
 echo "------------------------------------"
 
-# Install kind
-if ! command -v kind &> /dev/null; then
-  echo "Installing kind..."
-  curl -Lo /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/latest/kind-linux-${ARCH}"
-  chmod +x /usr/local/bin/kind
-  echo "kind installed successfully"
+# Install k3s
+if ! command -v k3s &> /dev/null; then
+  echo "Installing k3s..."
+  curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+  echo "k3s installed successfully"
 fi
 
-# Generate kind bash completion
-if command -v kind &> /dev/null; then
-  if kind completion bash > "${BASH_COMPLETIONS_DIR}/kind" 2>/dev/null; then
-    echo "kind completion installed"
+# Generate k3s bash completion
+if command -v k3s &> /dev/null; then
+  if k3s completion bash > "${BASH_COMPLETIONS_DIR}/k3s" 2>/dev/null; then
+    echo "k3s completion installed"
   else
-    echo "WARNING: Failed to generate kind completion"
+    echo "WARNING: Failed to generate k3s completion"
   fi
 fi
 
@@ -126,20 +125,18 @@ for i in {1..30}; do
   sleep 1
 done
 
-# Create kind network (ignore if already exists)
-if ! docker network inspect kind >/dev/null 2>&1; then
-  if docker network create kind >/dev/null 2>&1; then
-    echo "Created kind network"
-  else
-    echo "WARNING: Failed to create kind network (may already exist)"
-  fi
+# Set up kubeconfig for k3s (if k3s is running)
+if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+  mkdir -p ~/.kube
+  cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+  echo "k3s kubeconfig copied to ~/.kube/config"
 fi
 
 echo ""
 echo "------------------------------------"
 echo "Verifying installations..."
 echo "------------------------------------"
-kind version
+k3s --version
 kubebuilder version
 kubectl version --client
 docker --version

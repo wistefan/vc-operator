@@ -1,5 +1,6 @@
 /*
-Copyright 2026.
+Copyright 2026 Seamless Middleware Technologies S.L and/or its affiliates
+and other contributors as indicated by the @author tags.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
