@@ -1,7 +1,9 @@
 # Implementation Plan: Create a VC Operator
 
 ## Overview
-Build a Kubernetes operator in Go (using Kubebuilder) that obtains Verifiable Credentials via the OID4VCI protocol, stores them as Kubernetes Secrets, and automatically renews them before expiry. The operator introduces two Custom Resource Definitions — `CredentialIssuer` (configures an OID4VCI issuer such as Keycloak) and `VerifiableCredentialRequest` (declares a credential a service needs). The first supported issuer is Keycloak.
+Build a Kubernetes operator in Go (using Kubebuilder) that obtains Verifiable Credentials via the OID4VCI protocol, stores them securely, and automatically renews them before expiry. The operator introduces two Custom Resource Definitions — `CredentialIssuer` (configures an OID4VCI issuer such as Keycloak) and `VerifiableCredentialRequest` (declares a credential a service needs). The first supported issuer is Keycloak.
+
+Credential storage is implemented behind a `CredentialStore` interface, with Kubernetes Secrets as the default backend. This abstraction allows adding alternative storage backends (e.g., HashiCorp Vault, AWS Secrets Manager) in the future without modifying the controllers.
 
 ## Steps
 
@@ -75,8 +77,14 @@ type VerifiableCredentialRequestSpec struct {
     // Defaults to "jwt_vc_json".
     Format string `json:"format,omitempty"`
 
-    // TargetSecretRef specifies the Kubernetes Secret where the obtained
-    // credential will be stored.
+    // StorageType selects the credential storage backend.
+    // Supported values: "kubernetes" (default). Future: "vault".
+    // +kubebuilder:validation:Enum=kubernetes
+    // +kubebuilder:default=kubernetes
+    StorageType string `json:"storageType,omitempty"`
+
+    // TargetSecretRef specifies the target reference in the storage backend
+    // where the obtained credential will be stored (e.g., a Kubernetes Secret name).
     TargetSecretRef TargetSecretReference `json:"targetSecretRef"`
 
     // RenewBefore specifies how long before credential expiry the operator
@@ -183,22 +191,46 @@ Implement utilities for parsing Verifiable Credentials (JWT format) and extracti
    - Handle credentials without explicit expiry (treat as non-expiring or use a configurable default TTL).
    - Define constants for default renewal buffer and maximum credential lifetime.
 
-3. **Credential storage helpers** (`internal/credential/storage.go`):
+3. **Credential store interface** (`internal/credentialstore/store.go`):
+   - Define a `CredentialStore` interface that abstracts storage operations:
+     ```go
+     // CredentialStore abstracts the storage backend for obtained credentials.
+     // The default implementation uses Kubernetes Secrets. Alternative backends
+     // (e.g., HashiCorp Vault, AWS Secrets Manager) can be added by implementing
+     // this interface.
+     type CredentialStore interface {
+         // Store persists a credential to the storage backend.
+         Store(ctx context.Context, ref TargetRef, data *CredentialData) error
+         // Retrieve loads a previously stored credential.
+         Retrieve(ctx context.Context, ref TargetRef) (*CredentialData, error)
+         // Delete removes a stored credential.
+         Delete(ctx context.Context, ref TargetRef) error
+     }
+     ```
+   - Define `CredentialData` struct containing credential bytes, format, issuer, expiry timestamp, and previous credential (for rotation buffer).
+   - Define `TargetRef` struct containing namespace, name, and optional owner reference info.
+
+4. **Kubernetes Secrets backend** (`internal/credentialstore/kubernetes/secrets.go`):
+   - Implement `CredentialStore` using Kubernetes Secrets as the storage backend.
    - Build Kubernetes Secret data from a credential response.
    - Define the Secret data schema: keys for credential, format, issuer, expiry timestamp.
    - Add labels/annotations for operator management (`app.kubernetes.io/managed-by: vc-operator`).
+   - Set owner references so the Secret is garbage-collected when the CR is deleted.
 
 **Files created/modified:**
 - `internal/credential/jwt.go` + `jwt_test.go`
 - `internal/credential/expiry.go` + `expiry_test.go`
-- `internal/credential/storage.go` + `storage_test.go`
 - `internal/credential/constants.go` (named constants)
+- `internal/credentialstore/store.go` (interface definition)
+- `internal/credentialstore/kubernetes/secrets.go` + `secrets_test.go`
 
 **Acceptance criteria:**
 - JWT parsing correctly extracts claims from real-world-format JWT VCs (test with crafted JWTs).
 - Expiry calculation handles edge cases: no expiry, already expired, expiry in the past.
 - Parameterized tests cover multiple JWT structures and claim combinations.
-- Storage helpers produce valid Secret objects with correct labels/annotations.
+- `CredentialStore` interface is well-documented and implementation-agnostic.
+- Kubernetes Secrets backend correctly produces valid Secret objects with correct labels/annotations.
+- Backend is tested with a mock Kubernetes client.
 
 ---
 
@@ -235,9 +267,9 @@ Implement the reconciler for the `CredentialIssuer` custom resource. This contro
 
 ---
 
-### Step 6: VerifiableCredentialRequest Controller and Secret Storage
+### Step 6: VerifiableCredentialRequest Controller and Credential Storage
 
-Implement the main reconciler that obtains credentials via OID4VCI and stores them in Kubernetes Secrets.
+Implement the main reconciler that obtains credentials via OID4VCI and stores them using the pluggable `CredentialStore` interface.
 
 **What to do:**
 
@@ -248,15 +280,15 @@ Implement the main reconciler that obtains credentials via OID4VCI and stores th
      c. Use the OID4VCI client to obtain an access token.
      d. Request the specified credential type and format.
      e. Parse the returned credential to extract expiry.
-     f. Create or update the target Kubernetes Secret with the credential.
+     f. Store the credential via the injected `CredentialStore` backend.
      g. Set status conditions: `CredentialIssued`, `Ready`.
      h. Compute next renewal time and requeue accordingly.
    - On delete: optionally clean up the target Secret (configurable via finalizer).
 
-2. **Secret management**:
-   - Create the target Secret if it doesn't exist; update if it does.
-   - Set owner references so the Secret is garbage-collected when the CR is deleted.
-   - Add annotations with credential metadata (expiry, issuer, format).
+2. **Credential storage** (via `CredentialStore` interface):
+   - Use the `CredentialStore` interface (defined in Step 4) to persist credentials to the configured backend.
+   - The controller receives a `CredentialStore` implementation via dependency injection (constructor parameter), defaulting to the Kubernetes Secrets backend.
+   - This design allows swapping in alternative backends (e.g., HashiCorp Vault) without modifying controller logic.
 
 3. **Error handling**:
    - Implement exponential backoff for transient OID4VCI errors.
@@ -274,9 +306,9 @@ Implement the main reconciler that obtains credentials via OID4VCI and stores th
 - Update `cmd/main.go` to register both controllers with the manager.
 
 **Acceptance criteria:**
-- Full happy-path test: CR created → credential obtained → Secret created with correct data.
+- Full happy-path test: CR created → credential obtained → credential stored via `CredentialStore`.
 - Error-path tests: issuer not ready, auth secret missing, OID4VCI endpoint returns error.
-- Owner reference is set on the target Secret.
+- Controller is tested with a mock `CredentialStore` to verify storage-agnostic behavior.
 - Status conditions accurately reflect the current state.
 - Requeue duration matches the expected renewal time.
 
@@ -299,7 +331,7 @@ Implement automatic credential renewal before expiry and handle edge cases in th
    - Check stored credentials for imminent expiry and trigger immediate renewal if needed.
 
 3. **Credential rotation safety**:
-   - Add an annotation to the target Secret with the previous credential (one-deep rotation buffer) so consuming services have a grace period.
+   - Store the previous credential alongside the new one in the `CredentialData` (one-deep rotation buffer) so consuming services have a grace period. The `CredentialStore` backend handles the storage details (e.g., Secret annotation for Kubernetes, versioned secret for Vault).
    - Add a `status.lastRenewalTime` and `status.nextRenewalTime` to the CR status.
 
 4. **Metrics** (optional but recommended):
@@ -423,7 +455,7 @@ Write user-facing documentation and provide ready-to-use example configurations.
 
 3. **Developer documentation**:
    - Contributing guide (build, test, lint instructions).
-   - Architecture decision records for key choices (Go/kubebuilder, K8s Secrets vs. Vault, OID4VCI flow selection).
+   - Architecture decision records for key choices (Go/kubebuilder, `CredentialStore` interface for pluggable storage backends, OID4VCI flow selection).
 
 **Files created/modified:**
 - `README.md`
