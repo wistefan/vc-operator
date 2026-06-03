@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- vc_v1alpha1_credentialissuer.yaml
+- vc_v1alpha1_verifiablecredentialrequest.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
