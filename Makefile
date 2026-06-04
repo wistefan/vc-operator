@@ -149,6 +149,30 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+##@ Helm
+
+HELM_CHART_DIR ?= charts/vc-operator
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart.
+	helm lint $(HELM_CHART_DIR)
+
+.PHONY: helm-template
+helm-template: ## Render Helm chart templates locally for inspection.
+	helm template vc-operator $(HELM_CHART_DIR)
+
+.PHONY: helm-install
+helm-install: ## Install the Helm chart into the current cluster.
+	helm install vc-operator $(HELM_CHART_DIR)
+
+.PHONY: helm-upgrade
+helm-upgrade: ## Upgrade the Helm release in the current cluster.
+	helm upgrade vc-operator $(HELM_CHART_DIR)
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the Helm release from the current cluster.
+	helm uninstall vc-operator
+
 ##@ Deployment
 
 ifndef ignore-not-found
