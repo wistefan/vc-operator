@@ -76,17 +76,16 @@ type TargetRef struct {
 	OwnerName string
 }
 
-// CredentialData contains the credential payload and associated metadata
-// for storage and lifecycle management.
+// CredentialData contains the credential payload and expiry metadata
+// for storage and lifecycle management. The operator only stores
+// information needed for credential renewal scheduling; it does not
+// interpret identity claims or VC-specific content.
 type CredentialData struct {
 	// Credential is the raw credential bytes (e.g., the compact JWT string).
 	Credential []byte
 
 	// Format is the credential format identifier (e.g., "jwt_vc_json").
 	Format string
-
-	// Issuer is the identifier of the credential issuer.
-	Issuer string
 
 	// ExpiryTime is the credential's expiry time. Zero value means the
 	// credential does not have an explicit expiry.

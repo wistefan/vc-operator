@@ -45,9 +45,6 @@ const (
 	// SecretKeyFormat is the data key for the credential format identifier.
 	SecretKeyFormat = "format"
 
-	// SecretKeyIssuer is the data key for the credential issuer identifier.
-	SecretKeyIssuer = "issuer"
-
 	// SecretKeyExpiryTimestamp is the data key for the credential expiry
 	// time stored as a Unix timestamp string.
 	SecretKeyExpiryTimestamp = "expiryTimestamp"
@@ -184,7 +181,6 @@ func buildSecret(ref credentialstore.TargetRef, data *credentialstore.Credential
 	secretData := map[string][]byte{
 		credKey:         data.Credential,
 		SecretKeyFormat: []byte(data.Format),
-		SecretKeyIssuer: []byte(data.Issuer),
 	}
 
 	if !data.ExpiryTime.IsZero() {
@@ -254,7 +250,6 @@ func parseSecretData(secret *corev1.Secret, key string) (*credentialstore.Creden
 	data := &credentialstore.CredentialData{
 		Credential: credBytes,
 		Format:     string(secret.Data[SecretKeyFormat]),
-		Issuer:     string(secret.Data[SecretKeyIssuer]),
 	}
 
 	if expiryStr, ok := secret.Data[SecretKeyExpiryTimestamp]; ok {

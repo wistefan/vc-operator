@@ -74,7 +74,6 @@ func TestSecretStore_StoreAndRetrieve(t *testing.T) {
 	data := &credentialstore.CredentialData{
 		Credential: []byte("eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJ0ZXN0In0.sig"),
 		Format:     "jwt_vc_json",
-		Issuer:     "https://issuer.example.com",
 		ExpiryTime: expiry,
 		IssuedAt:   now,
 	}
@@ -95,9 +94,6 @@ func TestSecretStore_StoreAndRetrieve(t *testing.T) {
 	}
 	if retrieved.Format != data.Format {
 		t.Errorf("Format = %q, want %q", retrieved.Format, data.Format)
-	}
-	if retrieved.Issuer != data.Issuer {
-		t.Errorf("Issuer = %q, want %q", retrieved.Issuer, data.Issuer)
 	}
 	if retrieved.ExpiryTime.Unix() != data.ExpiryTime.Unix() {
 		t.Errorf("ExpiryTime = %v, want %v", retrieved.ExpiryTime, data.ExpiryTime)
@@ -137,7 +133,6 @@ func TestSecretStore_StoreUpdatesExisting(t *testing.T) {
 	newData := &credentialstore.CredentialData{
 		Credential: []byte("new-credential"),
 		Format:     "jwt_vc_json",
-		Issuer:     "https://new-issuer.example.com",
 	}
 
 	// Update the credential.
@@ -154,9 +149,6 @@ func TestSecretStore_StoreUpdatesExisting(t *testing.T) {
 	if string(retrieved.Credential) != "new-credential" {
 		t.Errorf("Credential = %q, want %q", string(retrieved.Credential), "new-credential")
 	}
-	if retrieved.Issuer != "https://new-issuer.example.com" {
-		t.Errorf("Issuer = %q, want %q", retrieved.Issuer, "https://new-issuer.example.com")
-	}
 }
 
 func TestSecretStore_StoreWithPreviousCredential(t *testing.T) {
@@ -172,7 +164,6 @@ func TestSecretStore_StoreWithPreviousCredential(t *testing.T) {
 	data := &credentialstore.CredentialData{
 		Credential:         []byte("new-credential"),
 		Format:             "jwt_vc_json",
-		Issuer:             "https://issuer.example.com",
 		PreviousCredential: []byte("old-credential"),
 	}
 
@@ -203,7 +194,6 @@ func TestSecretStore_StoreWithCustomKey(t *testing.T) {
 	data := &credentialstore.CredentialData{
 		Credential: []byte("custom-key-credential"),
 		Format:     "jwt_vc_json",
-		Issuer:     "https://issuer.example.com",
 	}
 
 	if err := store.Store(ctx, ref, data); err != nil {
@@ -328,7 +318,6 @@ func TestBuildSecret_Labels(t *testing.T) {
 	data := &credentialstore.CredentialData{
 		Credential: []byte("cred"),
 		Format:     "jwt_vc_json",
-		Issuer:     "https://issuer.example.com",
 	}
 
 	secret := buildSecret(ref, data)
@@ -425,7 +414,6 @@ func TestBuildSecret_DataKeys(t *testing.T) {
 			data: &credentialstore.CredentialData{
 				Credential:         []byte("cred"),
 				Format:             "jwt_vc_json",
-				Issuer:             "issuer",
 				ExpiryTime:         expiry,
 				IssuedAt:           now,
 				PreviousCredential: []byte("old"),

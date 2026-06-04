@@ -42,76 +42,50 @@ func TestParseJWTCredential(t *testing.T) {
 	iatTime := now.Add(-5 * time.Minute)
 
 	tests := []struct {
-		name        string
-		rawJWT      string
-		wantIssuer  string
-		wantSubject string
-		wantExpiry  bool
-		wantIat     bool
-		wantVCTypes []string
-		wantErr     bool
+		name       string
+		rawJWT     string
+		wantExpiry bool
+		wantIat    bool
+		wantErr    bool
 	}{
 		{
-			name: "full JWT VC with all standard claims and vc payload",
+			name: "JWT with both exp and iat claims",
 			rawJWT: buildJWT(
 				map[string]interface{}{"alg": "ES256", "typ": "JWT"},
 				map[string]interface{}{
-					ClaimIss: "https://issuer.example.com",
-					ClaimSub: "did:example:holder123",
 					ClaimExp: float64(expTime.Unix()),
 					ClaimIat: float64(iatTime.Unix()),
-					ClaimJti: "urn:uuid:abc-123",
-					ClaimVC: map[string]interface{}{
-						VCClaimType:    []interface{}{"VerifiableCredential", "UniversityDegreeCredential"},
-						VCClaimContext: []interface{}{"https://www.w3.org/2018/credentials/v1"},
-						VCClaimCredentialSubject: map[string]interface{}{
-							"degree": map[string]interface{}{
-								"type": "BachelorDegree",
-								"name": "Computer Science",
-							},
-						},
-					},
+					"iss":    "https://issuer.example.com",
+					"sub":    "did:example:holder123",
 				},
 			),
-			wantIssuer:  "https://issuer.example.com",
-			wantSubject: "did:example:holder123",
-			wantExpiry:  true,
-			wantIat:     true,
-			wantVCTypes: []string{"VerifiableCredential", "UniversityDegreeCredential"},
-			wantErr:     false,
+			wantExpiry: true,
+			wantIat:    true,
+			wantErr:    false,
 		},
 		{
-			name: "JWT with only issuer and expiry",
+			name: "JWT with only expiry",
 			rawJWT: buildJWT(
 				map[string]interface{}{"alg": "ES256"},
 				map[string]interface{}{
-					ClaimIss: "https://issuer.example.com",
 					ClaimExp: float64(expTime.Unix()),
 				},
 			),
-			wantIssuer:  "https://issuer.example.com",
-			wantSubject: "",
-			wantExpiry:  true,
-			wantIat:     false,
-			wantVCTypes: nil,
-			wantErr:     false,
+			wantExpiry: true,
+			wantIat:    false,
+			wantErr:    false,
 		},
 		{
 			name: "JWT without expiry claim",
 			rawJWT: buildJWT(
 				map[string]interface{}{"alg": "ES256"},
 				map[string]interface{}{
-					ClaimIss: "https://issuer.example.com",
-					ClaimSub: "did:example:subject",
 					ClaimIat: float64(iatTime.Unix()),
 				},
 			),
-			wantIssuer:  "https://issuer.example.com",
-			wantSubject: "did:example:subject",
-			wantExpiry:  false,
-			wantIat:     true,
-			wantVCTypes: nil,
-			wantErr:     false,
+			wantExpiry: false,
+			wantIat:    true,
+			wantErr:    false,
 		},
 		{
 			name: "JWT with empty payload (minimal)",
@@ -119,32 +93,9 @@ func TestParseJWTCredential(t *testing.T) {
 				map[string]interface{}{"alg": "none"},
 				map[string]interface{}{},
 			),
-			wantIssuer:  "",
-			wantSubject: "",
-			wantExpiry:  false,
-			wantIat:     false,
-			wantVCTypes: nil,
-			wantErr:     false,
-		},
-		{
-			name: "JWT with vc claim but no type",
-			rawJWT: buildJWT(
-				map[string]interface{}{"alg": "ES256"},
-				map[string]interface{}{
-					ClaimIss: "https://issuer.example.com",
-					ClaimVC: map[string]interface{}{
-						VCClaimCredentialSubject: map[string]interface{}{
-							"name": "Alice",
-						},
-					},
-				},
-			),
-			wantIssuer:  "https://issuer.example.com",
-			wantSubject: "",
-			wantExpiry:  false,
-			wantIat:     false,
-			wantVCTypes: nil,
-			wantErr:     false,
+			wantExpiry: false,
+			wantIat:    false,
+			wantErr:    false,
 		},
 		{
 			name:    "empty JWT string",
@@ -167,8 +118,8 @@ func TestParseJWTCredential(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "JWT with invalid base64 in header",
-			rawJWT:  "!!!invalid!!!.eyJ0ZXN0IjoxfQ.sig",
+			name:    "JWT with invalid base64 in payload",
+			rawJWT:  "eyJhbGciOiJFUzI1NiJ9.!!!invalid!!!.sig",
 			wantErr: true,
 		},
 		{
@@ -193,12 +144,6 @@ func TestParseJWTCredential(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if parsed.Issuer != tt.wantIssuer {
-				t.Errorf("Issuer = %q, want %q", parsed.Issuer, tt.wantIssuer)
-			}
-			if parsed.Subject != tt.wantSubject {
-				t.Errorf("Subject = %q, want %q", parsed.Subject, tt.wantSubject)
-			}
 			if tt.wantExpiry && !parsed.HasExpiry() {
 				t.Errorf("expected expiry to be set")
 			}
@@ -210,23 +155,6 @@ func TestParseJWTCredential(t *testing.T) {
 			}
 			if !tt.wantIat && !parsed.IssuedAt.IsZero() {
 				t.Errorf("expected no IssuedAt, got %v", parsed.IssuedAt)
-			}
-
-			vcTypes := parsed.VCTypes()
-			if tt.wantVCTypes == nil {
-				if vcTypes != nil {
-					t.Errorf("VCTypes = %v, want nil", vcTypes)
-				}
-			} else {
-				if len(vcTypes) != len(tt.wantVCTypes) {
-					t.Errorf("VCTypes length = %d, want %d", len(vcTypes), len(tt.wantVCTypes))
-				} else {
-					for i, v := range vcTypes {
-						if v != tt.wantVCTypes[i] {
-							t.Errorf("VCTypes[%d] = %q, want %q", i, v, tt.wantVCTypes[i])
-						}
-					}
-				}
 			}
 		})
 	}
@@ -305,71 +233,10 @@ func TestParsedCredential_HasExpiry(t *testing.T) {
 	}
 }
 
-func TestParsedCredential_VCTypes(t *testing.T) {
-	tests := []struct {
-		name     string
-		vcClaims map[string]interface{}
-		want     []string
-	}{
-		{
-			name: "single type",
-			vcClaims: map[string]interface{}{
-				VCClaimType: []interface{}{"VerifiableCredential"},
-			},
-			want: []string{"VerifiableCredential"},
-		},
-		{
-			name: "multiple types",
-			vcClaims: map[string]interface{}{
-				VCClaimType: []interface{}{"VerifiableCredential", "UniversityDegreeCredential"},
-			},
-			want: []string{"VerifiableCredential", "UniversityDegreeCredential"},
-		},
-		{
-			name:     "nil vc claims",
-			vcClaims: nil,
-			want:     nil,
-		},
-		{
-			name:     "vc claims without type",
-			vcClaims: map[string]interface{}{"other": "value"},
-			want:     nil,
-		},
-		{
-			name: "vc claims with non-array type",
-			vcClaims: map[string]interface{}{
-				VCClaimType: "not-an-array",
-			},
-			want: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pc := &ParsedCredential{VCClaims: tt.vcClaims}
-			got := pc.VCTypes()
-			if tt.want == nil {
-				if got != nil {
-					t.Errorf("VCTypes() = %v, want nil", got)
-				}
-				return
-			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("VCTypes() length = %d, want %d", len(got), len(tt.want))
-			}
-			for i, v := range got {
-				if v != tt.want[i] {
-					t.Errorf("VCTypes()[%d] = %q, want %q", i, v, tt.want[i])
-				}
-			}
-		})
-	}
-}
-
 func TestParseJWTCredential_RawJWTPreserved(t *testing.T) {
 	jwt := buildJWT(
 		map[string]interface{}{"alg": "ES256"},
-		map[string]interface{}{ClaimIss: "test"},
+		map[string]interface{}{ClaimExp: float64(time.Now().Add(1 * time.Hour).Unix())},
 	)
 
 	parsed, err := ParseJWTCredential(jwt)
@@ -382,31 +249,20 @@ func TestParseJWTCredential_RawJWTPreserved(t *testing.T) {
 	}
 }
 
-func TestParseJWTCredential_HeaderParsed(t *testing.T) {
+func TestParseJWTCredential_IgnoresNonExpiryFields(t *testing.T) {
+	// The parser should not fail when extra claims (iss, sub, vc, etc.) are
+	// present — it simply ignores them and only extracts exp and iat.
 	jwt := buildJWT(
 		map[string]interface{}{"alg": "ES256", "typ": "JWT", "kid": "key-1"},
-		map[string]interface{}{ClaimIss: "test"},
-	)
-
-	parsed, err := ParseJWTCredential(jwt)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if parsed.Header["alg"] != "ES256" {
-		t.Errorf("Header[alg] = %v, want ES256", parsed.Header["alg"])
-	}
-	if parsed.Header["kid"] != "key-1" {
-		t.Errorf("Header[kid] = %v, want key-1", parsed.Header["kid"])
-	}
-}
-
-func TestParseJWTCredential_AllClaimsAccessible(t *testing.T) {
-	jwt := buildJWT(
-		map[string]interface{}{"alg": "ES256"},
 		map[string]interface{}{
-			ClaimIss:       "test-issuer",
-			"custom_claim": "custom_value",
+			ClaimExp: float64(time.Now().Add(1 * time.Hour).Unix()),
+			ClaimIat: float64(time.Now().Unix()),
+			"iss":    "https://issuer.example.com",
+			"sub":    "did:example:holder123",
+			"jti":    "urn:uuid:abc-123",
+			"vc": map[string]interface{}{
+				"type": []interface{}{"VerifiableCredential"},
+			},
 		},
 	)
 
@@ -415,8 +271,11 @@ func TestParseJWTCredential_AllClaimsAccessible(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if parsed.AllClaims["custom_claim"] != "custom_value" {
-		t.Errorf("AllClaims[custom_claim] = %v, want custom_value", parsed.AllClaims["custom_claim"])
+	if !parsed.HasExpiry() {
+		t.Error("expected expiry to be set")
+	}
+	if parsed.IssuedAt.IsZero() {
+		t.Error("expected IssuedAt to be set")
 	}
 }
 

@@ -38,42 +38,15 @@ const (
 	JWTSignatureSegment = 2
 )
 
-// Standard JWT registered claim names.
+// JWT claim names relevant to credential lifecycle management.
+// The operator only extracts expiry-related claims; it does not interpret
+// identity claims (iss, sub, jti) or VC-specific payload.
 const (
 	// ClaimExp is the JWT "exp" (Expiration Time) claim name.
 	ClaimExp = "exp"
 
 	// ClaimIat is the JWT "iat" (Issued At) claim name.
 	ClaimIat = "iat"
-
-	// ClaimIss is the JWT "iss" (Issuer) claim name.
-	ClaimIss = "iss"
-
-	// ClaimSub is the JWT "sub" (Subject) claim name.
-	ClaimSub = "sub"
-
-	// ClaimJti is the JWT "jti" (JWT ID) claim name.
-	ClaimJti = "jti"
-
-	// ClaimNbf is the JWT "nbf" (Not Before) claim name.
-	ClaimNbf = "nbf"
-)
-
-// VC-specific claim names.
-const (
-	// ClaimVC is the claim name for the Verifiable Credential payload
-	// within a JWT VC, as defined in W3C VC Data Model.
-	ClaimVC = "vc"
-
-	// VCClaimType is the key for credential types within the "vc" claim.
-	VCClaimType = "type"
-
-	// VCClaimCredentialSubject is the key for the credential subject
-	// within the "vc" claim.
-	VCClaimCredentialSubject = "credentialSubject"
-
-	// VCClaimContext is the key for JSON-LD @context within the "vc" claim.
-	VCClaimContext = "@context"
 )
 
 // Credential lifecycle constants.

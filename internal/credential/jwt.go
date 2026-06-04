@@ -25,22 +25,13 @@ import (
 	"time"
 )
 
-// ParsedCredential holds the extracted information from a parsed JWT
-// Verifiable Credential, including standard JWT claims and VC-specific data.
+// ParsedCredential holds the expiry-related information extracted from a
+// parsed JWT Verifiable Credential. The operator only needs lifecycle data
+// (expiry and issued-at times) to schedule credential renewal; it does not
+// interpret identity claims or VC-specific payload.
 type ParsedCredential struct {
 	// RawJWT is the original compact-serialized JWT string.
 	RawJWT string
-
-	// Header contains the decoded JWT header claims (e.g., "alg", "typ", "kid").
-	Header map[string]interface{}
-
-	// Issuer is the value of the "iss" (Issuer) claim, identifying who
-	// issued the credential.
-	Issuer string
-
-	// Subject is the value of the "sub" (Subject) claim, identifying the
-	// entity the credential describes.
-	Subject string
 
 	// IssuedAt is the time extracted from the "iat" (Issued At) claim.
 	// Zero value if the claim is absent.
@@ -49,23 +40,6 @@ type ParsedCredential struct {
 	// Expiry is the time extracted from the "exp" (Expiration Time) claim.
 	// Zero value if the claim is absent, meaning the credential does not expire.
 	Expiry time.Time
-
-	// NotBefore is the time extracted from the "nbf" (Not Before) claim.
-	// Zero value if the claim is absent.
-	NotBefore time.Time
-
-	// JWTID is the value of the "jti" (JWT ID) claim, a unique identifier
-	// for the JWT.
-	JWTID string
-
-	// VCClaims contains the decoded "vc" claim payload, which holds
-	// VC-specific data such as type, credentialSubject, and @context.
-	// Nil if no "vc" claim is present.
-	VCClaims map[string]interface{}
-
-	// AllClaims contains all decoded payload claims for access to
-	// non-standard or issuer-specific claims.
-	AllClaims map[string]interface{}
 }
 
 // HasExpiry reports whether the parsed credential contains an explicit
@@ -83,36 +57,14 @@ func (pc *ParsedCredential) IsExpired(now time.Time) bool {
 	return now.After(pc.Expiry)
 }
 
-// VCTypes returns the credential type strings from the "vc.type" claim.
-// Returns nil if the "vc" claim is absent or has no "type" field.
-func (pc *ParsedCredential) VCTypes() []string {
-	if pc.VCClaims == nil {
-		return nil
-	}
-	typeVal, ok := pc.VCClaims[VCClaimType]
-	if !ok {
-		return nil
-	}
-	arr, ok := typeVal.([]interface{})
-	if !ok {
-		return nil
-	}
-	types := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			types = append(types, s)
-		}
-	}
-	return types
-}
-
 // ParseJWTCredential parses a compact-serialized JWT Verifiable Credential
-// and extracts standard claims and VC-specific data. It does NOT verify
-// the JWT signature — the operator trusts the issuer; signature verification
-// is the holder/verifier's responsibility.
+// and extracts the expiry-related claims needed for credential lifecycle
+// management (exp and iat). It does NOT verify the JWT signature — the
+// operator trusts the issuer; signature verification is the holder/verifier's
+// responsibility.
 //
 // The JWT must have three dot-separated segments (header.payload.signature).
-// Both header and payload are Base64url-decoded and parsed as JSON.
+// Only the payload segment is decoded and parsed for expiry information.
 func ParseJWTCredential(rawJWT string) (*ParsedCredential, error) {
 	rawJWT = strings.TrimSpace(rawJWT)
 	if rawJWT == "" {
@@ -124,37 +76,16 @@ func ParseJWTCredential(rawJWT string) (*ParsedCredential, error) {
 		return nil, fmt.Errorf("invalid JWT: expected %d segments, got %d", JWTSegmentCount, len(segments))
 	}
 
-	// Decode and parse header.
-	header, err := decodeJWTSegment(segments[JWTHeaderSegment])
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode JWT header: %w", err)
-	}
-
-	// Decode and parse payload.
+	// Decode and parse the payload segment to extract expiry information.
 	payload, err := decodeJWTSegment(segments[JWTPayloadSegment])
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
 	}
 
 	pc := &ParsedCredential{
-		RawJWT:    rawJWT,
-		Header:    header,
-		AllClaims: payload,
-	}
-
-	// Extract standard claims.
-	pc.Issuer = extractStringClaim(payload, ClaimIss)
-	pc.Subject = extractStringClaim(payload, ClaimSub)
-	pc.JWTID = extractStringClaim(payload, ClaimJti)
-	pc.Expiry = extractTimeClaim(payload, ClaimExp)
-	pc.IssuedAt = extractTimeClaim(payload, ClaimIat)
-	pc.NotBefore = extractTimeClaim(payload, ClaimNbf)
-
-	// Extract VC claims.
-	if vcRaw, ok := payload[ClaimVC]; ok {
-		if vcMap, ok := vcRaw.(map[string]interface{}); ok {
-			pc.VCClaims = vcMap
-		}
+		RawJWT:   rawJWT,
+		Expiry:   extractTimeClaim(payload, ClaimExp),
+		IssuedAt: extractTimeClaim(payload, ClaimIat),
 	}
 
 	return pc, nil
@@ -192,20 +123,6 @@ func addBase64Padding(s string) string {
 	default:
 		return s
 	}
-}
-
-// extractStringClaim extracts a string value from a JWT claims map.
-// Returns an empty string if the claim is absent or not a string.
-func extractStringClaim(claims map[string]interface{}, key string) string {
-	val, ok := claims[key]
-	if !ok {
-		return ""
-	}
-	s, ok := val.(string)
-	if !ok {
-		return ""
-	}
-	return s
 }
 
 // extractTimeClaim extracts a Unix timestamp from a JWT claims map and
