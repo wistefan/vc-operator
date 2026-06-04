@@ -26,6 +26,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -107,6 +109,40 @@ func buildTestJWTWithExpiry(iat time.Time, expiry time.Time) string {
 		"iss": "https://issuer.example.com",
 	}
 	return buildTestJWT(claims)
+}
+
+// getCounterValue reads the current value of a Prometheus counter metric
+// for the given label values.
+func getCounterValue(counter *prometheus.CounterVec, labels ...string) float64 {
+	m := &dto.Metric{}
+	c, err := counter.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	if err := c.(prometheus.Metric).Write(m); err != nil {
+		return 0
+	}
+	if m.Counter == nil {
+		return 0
+	}
+	return m.Counter.GetValue()
+}
+
+// getGaugeValue reads the current value of a Prometheus gauge metric
+// for the given label values.
+func getGaugeValue(gauge *prometheus.GaugeVec, labels ...string) float64 {
+	m := &dto.Metric{}
+	g, err := gauge.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	if err := g.(prometheus.Metric).Write(m); err != nil {
+		return 0
+	}
+	if m.Gauge == nil {
+		return 0
+	}
+	return m.Gauge.GetValue()
 }
 
 var _ = Describe("VerifiableCredentialRequest Controller", func() {
@@ -256,6 +292,27 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				AccessToken: "test-access-token",
 				TokenType:   "Bearer",
 				ExpiresIn:   3600,
+			}, nil
+		}
+		mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, _ oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+			return &oid4vci.CredentialResponse{
+				Credential: testJWT,
+				Format:     "jwt_vc_json",
+			}, nil
+		}
+	}
+
+	// setupHappyPathWithClock configures mocks that use a specific reference time
+	// for generating JWTs, enabling deterministic time-based testing.
+	setupHappyPathWithClock := func(refTime time.Time, credDuration time.Duration) {
+		expiry := refTime.Add(credDuration)
+		testJWT := buildTestJWTWithExpiry(refTime, expiry)
+
+		mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+			return &oid4vci.TokenResponse{
+				AccessToken: "test-access-token",
+				TokenType:   "Bearer",
+				ExpiresIn:   int(credDuration.Seconds()),
 			}, nil
 		}
 		mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, _ oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
@@ -734,6 +791,35 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(eventRecorder.Events).Should(Receive(&event))
 			Expect(event).To(ContainSubstring("Renewed"))
 		})
+
+		It("should increment RenewalCount on each renewal", func() {
+			// First reconciliation — initial issuance.
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			status := getVCRequestStatus(ctx)
+			Expect(status.RenewalCount).To(Equal(int32(0)))
+
+			// Second reconciliation — first renewal.
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			status = getVCRequestStatus(ctx)
+			Expect(status.RenewalCount).To(Equal(int32(1)))
+
+			// Third reconciliation — second renewal.
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			status = getVCRequestStatus(ctx)
+			Expect(status.RenewalCount).To(Equal(int32(2)))
+		})
 	})
 
 	Context("happy path: previous credential rotation", func() {
@@ -978,6 +1064,337 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(result.RequeueAfter).To(BeNumerically("<", 35*time.Minute))
 		})
 	})
+
+	Context("injectable clock: deterministic renewal scheduling", func() {
+		var fakeClock *FakeClock
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			createVCRequest(ctx)
+
+			fakeClock = &FakeClock{
+				CurrentTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			}
+			reconciler.Clock = fakeClock
+
+			// Credential valid for 1 hour from fake clock time.
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should use the injected clock for renewal computation", func() {
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Expiry at 13:00 UTC, renewBefore default 5m, so renewal at 12:55 UTC.
+			// Requeue = 12:55 - 12:00 = 55 minutes.
+			Expect(result.RequeueAfter).To(Equal(55 * time.Minute))
+		})
+
+		It("should compute correct requeue after time advancement", func() {
+			// First reconciliation at 12:00 UTC.
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Advance clock to 12:50 UTC (close to renewal time 12:55).
+			fakeClock.Advance(50 * time.Minute)
+			// Set up new credential for second reconciliation.
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			// New credential expires at 13:50, renewBefore 5m, renewal at 13:45.
+			// Requeue = 13:45 - 12:50 = 55 minutes.
+			Expect(result.RequeueAfter).To(Equal(55 * time.Minute))
+		})
+
+		It("should set correct NextRenewalTime and CredentialExpiryTime", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			status := getVCRequestStatus(ctx)
+			// Credential expires at 13:00 UTC.
+			expectedExpiry := time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
+			Expect(status.CredentialExpiryTime).NotTo(BeNil())
+			Expect(status.CredentialExpiryTime.UTC()).To(BeTemporally("~", expectedExpiry, 2*time.Second))
+
+			// NextRenewalTime = expiry - 5m = 12:55 UTC.
+			expectedRenewal := time.Date(2026, 6, 1, 12, 55, 0, 0, time.UTC)
+			Expect(status.NextRenewalTime).NotTo(BeNil())
+			Expect(status.NextRenewalTime.UTC()).To(BeTemporally("~", expectedRenewal, 2*time.Second))
+		})
+
+		It("should trigger immediate renewal for expired credential", func() {
+			// Advance clock past expiry.
+			fakeClock.SetTime(time.Date(2026, 6, 1, 14, 0, 0, 0, time.UTC))
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			// Renewal is overdue — requeue at MinRenewalInterval.
+			Expect(result.RequeueAfter).To(Equal(credential.MinRenewalInterval))
+		})
+	})
+
+	Context("Prometheus metrics: initial issuance", func() {
+		var testMetrics *VCRequestMetrics
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			createVCRequest(ctx)
+			setupHappyPath()
+
+			// Create fresh metrics (not registered — we just test the counters directly).
+			testMetrics = NewVCRequestMetrics()
+			reconciler.Metrics = testMetrics
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should increment credentials_issued_total on initial issuance", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			issued := getCounterValue(testMetrics.CredentialsIssuedTotal, vcReqNs, vcReqName, credType)
+			Expect(issued).To(Equal(float64(1)))
+
+			renewed := getCounterValue(testMetrics.CredentialsRenewedTotal, vcReqNs, vcReqName, credType)
+			Expect(renewed).To(Equal(float64(0)))
+		})
+
+		It("should set credential_expiry_seconds gauge", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			expiry := getGaugeValue(testMetrics.CredentialExpirySeconds, vcReqNs, vcReqName, credType)
+			// Expiry should be a future Unix timestamp (within 2 hours from now).
+			Expect(expiry).To(BeNumerically(">", float64(time.Now().Unix())))
+			Expect(expiry).To(BeNumerically("<", float64(time.Now().Add(2*time.Hour).Unix())))
+		})
+	})
+
+	Context("Prometheus metrics: renewal", func() {
+		var testMetrics *VCRequestMetrics
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			createVCRequest(ctx)
+			setupHappyPath()
+
+			testMetrics = NewVCRequestMetrics()
+			reconciler.Metrics = testMetrics
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should increment credentials_renewed_total on renewal", func() {
+			// First reconciliation — initial issuance.
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconciliation — renewal.
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			issued := getCounterValue(testMetrics.CredentialsIssuedTotal, vcReqNs, vcReqName, credType)
+			Expect(issued).To(Equal(float64(1)))
+
+			renewed := getCounterValue(testMetrics.CredentialsRenewedTotal, vcReqNs, vcReqName, credType)
+			Expect(renewed).To(Equal(float64(1)))
+		})
+
+		It("should accumulate renewal count over multiple renewals", func() {
+			// Initial + 3 renewals.
+			for i := 0; i < 4; i++ {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			issued := getCounterValue(testMetrics.CredentialsIssuedTotal, vcReqNs, vcReqName, credType)
+			Expect(issued).To(Equal(float64(1)))
+
+			renewed := getCounterValue(testMetrics.CredentialsRenewedTotal, vcReqNs, vcReqName, credType)
+			Expect(renewed).To(Equal(float64(3)))
+		})
+	})
+
+	Context("Prometheus metrics: errors", func() {
+		var testMetrics *VCRequestMetrics
+
+		BeforeEach(func() {
+			createVCRequest(ctx)
+
+			testMetrics = NewVCRequestMetrics()
+			reconciler.Metrics = testMetrics
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should increment credentials_errors_total on issuer not found", func() {
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonIssuerNotFound)
+			Expect(errors).To(Equal(float64(1)))
+		})
+
+		It("should increment credentials_errors_total on auth secret missing", func() {
+			createReadyIssuer(ctx)
+			// No auth secret created.
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonAuthSecretNotFound)
+			Expect(errors).To(Equal(float64(1)))
+		})
+
+		It("should increment credentials_errors_total on token request failure", func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+				return nil, fmt.Errorf("token error")
+			}
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonTokenRequestFailed)
+			Expect(errors).To(Equal(float64(1)))
+		})
+
+		It("should increment credentials_errors_total on storage failure", func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			setupHappyPath()
+			mockStore.storeFunc = func(_ context.Context, _ credentialstore.TargetRef, _ *credentialstore.CredentialData) error {
+				return fmt.Errorf("storage error")
+			}
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonStorageFailed)
+			Expect(errors).To(Equal(float64(1)))
+		})
+	})
+
+	Context("nil metrics: no panic when metrics not configured", func() {
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			createVCRequest(ctx)
+			setupHappyPath()
+
+			// Ensure Metrics is nil (default from BeforeEach).
+			reconciler.Metrics = nil
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should succeed without panicking when metrics are nil", func() {
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("startup reconciliation: imminent expiry", func() {
+		var fakeClock *FakeClock
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			createVCRequest(ctx)
+
+			// Set up clock at credential creation time.
+			fakeClock = &FakeClock{
+				CurrentTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			}
+			reconciler.Clock = fakeClock
+
+			// Credential valid for only 10 minutes from the fake clock time.
+			setupHappyPathWithClock(fakeClock.CurrentTime, 10*time.Minute)
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+		})
+
+		It("should schedule renewal soon for short-lived credentials", func() {
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Credential expires at 12:10, renewBefore=5m → renewal at 12:05.
+			// Requeue = 12:05 - 12:00 = 5 minutes.
+			Expect(result.RequeueAfter).To(Equal(5 * time.Minute))
+		})
+
+		It("should trigger immediate renewal if renewal window has passed", func() {
+			// Advance clock to 12:06 — past the 12:05 renewal time.
+			fakeClock.Advance(6 * time.Minute)
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Renewal time already passed, use MinRenewalInterval.
+			Expect(result.RequeueAfter).To(Equal(credential.MinRenewalInterval))
+		})
+	})
 })
 
 var _ = Describe("resolveFormat", func() {
@@ -1010,5 +1427,64 @@ var _ = Describe("resolveRenewBefore", func() {
 
 	It("should return the default when nil", func() {
 		Expect(reconciler.resolveRenewBefore(nil)).To(Equal(credential.DefaultRenewBeforeDuration))
+	})
+})
+
+var _ = Describe("Clock implementations", func() {
+	Context("RealClock", func() {
+		It("should return a time close to now", func() {
+			clock := RealClock{}
+			before := time.Now()
+			result := clock.Now()
+			after := time.Now()
+
+			Expect(result).To(BeTemporally(">=", before))
+			Expect(result).To(BeTemporally("<=", after))
+		})
+	})
+
+	Context("FakeClock", func() {
+		It("should return the set time", func() {
+			t := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			clock := &FakeClock{CurrentTime: t}
+			Expect(clock.Now()).To(Equal(t))
+		})
+
+		It("should advance time by the given duration", func() {
+			t := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			clock := &FakeClock{CurrentTime: t}
+			clock.Advance(1 * time.Hour)
+			Expect(clock.Now()).To(Equal(t.Add(1 * time.Hour)))
+		})
+
+		It("should set time to a specific point", func() {
+			clock := &FakeClock{CurrentTime: time.Now()}
+			newTime := time.Date(2030, 12, 31, 23, 59, 59, 0, time.UTC)
+			clock.SetTime(newTime)
+			Expect(clock.Now()).To(Equal(newTime))
+		})
+	})
+})
+
+var _ = Describe("VCRequestMetrics", func() {
+	It("should create metrics with correct names", func() {
+		m := NewVCRequestMetrics()
+		Expect(m.CredentialsIssuedTotal).NotTo(BeNil())
+		Expect(m.CredentialsRenewedTotal).NotTo(BeNil())
+		Expect(m.CredentialsErrorsTotal).NotTo(BeNil())
+		Expect(m.CredentialExpirySeconds).NotTo(BeNil())
+
+		// Verify we can create metric instances with expected labels.
+		counter, err := m.CredentialsIssuedTotal.GetMetricWithLabelValues("ns", "name", "type")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counter).NotTo(BeNil())
+
+		errCounter, err := m.CredentialsErrorsTotal.GetMetricWithLabelValues("ns", "name", "reason")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(errCounter).NotTo(BeNil())
+
+		gauge, err := m.CredentialExpirySeconds.GetMetricWithLabelValues("ns", "name", "type")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gauge).NotTo(BeNil())
 	})
 })

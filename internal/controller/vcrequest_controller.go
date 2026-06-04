@@ -63,6 +63,24 @@ type VerifiableCredentialRequestReconciler struct {
 	OID4VCIClient   oid4vci.Client
 	CredentialStore credentialstore.CredentialStore
 	EventRecorder   record.EventRecorder
+
+	// Clock provides an abstraction over time.Now() for testability.
+	// If nil, RealClock is used. In tests, set to a FakeClock to
+	// control time progression for renewal simulation.
+	Clock Clock
+
+	// Metrics holds Prometheus metric collectors for tracking credential
+	// issuance, renewal, errors, and expiry. If nil, metrics are not recorded.
+	Metrics *VCRequestMetrics
+}
+
+// now returns the current time from the injected Clock, falling back to
+// RealClock if no Clock is configured.
+func (r *VerifiableCredentialRequestReconciler) now() time.Time {
+	if r.Clock != nil {
+		return r.Clock.Now()
+	}
+	return time.Now()
 }
 
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=verifiablecredentialrequests,verbs=get;list;watch;update;patch
@@ -146,7 +164,7 @@ func (r *VerifiableCredentialRequestReconciler) Reconcile(ctx context.Context, r
 	}
 
 	// Step 7: Compute renewal scheduling information.
-	now := time.Now()
+	now := r.now()
 	renewBefore := r.resolveRenewBefore(vcReq.Spec.RenewBefore)
 	renewalInfo := credential.ComputeRenewalInfo(parsed, renewBefore, now)
 
@@ -322,6 +340,7 @@ func (r *VerifiableCredentialRequestReconciler) handleIssuerError(
 	if ie, ok := err.(*issuerError); ok {
 		log.Info("Issuer not available", "reason", ie.reason, "message", ie.message)
 		r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, ie.reason, ie.message)
+		r.recordErrorMetric(vcReq, ie.reason)
 
 		if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, ie.reason, ie.message); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -347,6 +366,7 @@ func (r *VerifiableCredentialRequestReconciler) handleAuthError(
 	msg := fmt.Sprintf("Failed to read auth credentials: %v", err)
 	log.Info("Auth credential error", "error", err)
 	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretNotFound, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonAuthSecretNotFound)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonAuthSecretNotFound, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -367,6 +387,7 @@ func (r *VerifiableCredentialRequestReconciler) handleTokenError(
 	msg := fmt.Sprintf("Failed to obtain access token: %v", err)
 	log.Error(err, "Token request failed")
 	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonTokenRequestFailed, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonTokenRequestFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonTokenRequestFailed, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -387,6 +408,7 @@ func (r *VerifiableCredentialRequestReconciler) handleCredentialRequestError(
 	msg := fmt.Sprintf("Failed to request credential: %v", err)
 	log.Error(err, "Credential request failed")
 	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonCredentialRequestFailed, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonCredentialRequestFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonCredentialRequestFailed, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -406,6 +428,7 @@ func (r *VerifiableCredentialRequestReconciler) handlePermanentError(
 
 	log.Info("Permanent error during credential acquisition", "reason", reason, "message", message)
 	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, reason, message)
+	r.recordErrorMetric(vcReq, reason)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, reason, message); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -426,6 +449,7 @@ func (r *VerifiableCredentialRequestReconciler) handleStorageError(
 	msg := fmt.Sprintf("Failed to store credential: %v", err)
 	log.Error(err, "Credential storage failed")
 	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonStorageFailed, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonStorageFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonStorageFailed, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -451,10 +475,11 @@ func (r *VerifiableCredentialRequestReconciler) handleSuccess(
 	// Determine if this is a renewal (previous issuance exists) or initial issuance.
 	isRenewal := vcReq.Status.LastIssuanceTime != nil
 
-	// Update status timestamps.
+	// Update status timestamps and renewal counter.
 	vcReq.Status.LastIssuanceTime = &metaNow
 	if isRenewal {
 		vcReq.Status.LastRenewalTime = &metaNow
+		vcReq.Status.RenewalCount++
 	}
 	vcReq.Status.CredentialFormat = format
 
@@ -503,7 +528,7 @@ func (r *VerifiableCredentialRequestReconciler) handleSuccess(
 		return ctrl.Result{}, err
 	}
 
-	// Record success event.
+	// Record success event and update metrics.
 	eventMsg := fmt.Sprintf("Credential %q obtained and stored in %s/%s",
 		vcReq.Spec.CredentialType, vcReq.Namespace, vcReq.Spec.TargetSecretRef.Name)
 	if isRenewal {
@@ -512,6 +537,7 @@ func (r *VerifiableCredentialRequestReconciler) handleSuccess(
 	} else {
 		r.EventRecorder.Event(vcReq, corev1.EventTypeNormal, vcv1alpha1.ReasonCredentialObtained, eventMsg)
 	}
+	r.recordSuccessMetrics(vcReq, isRenewal, parsed)
 
 	// Compute requeue interval from renewal info.
 	requeueAfter := renewalInfo.TimeUntilRenewal
@@ -558,6 +584,40 @@ func (r *VerifiableCredentialRequestReconciler) setVCRequestErrorStatus(
 		return err
 	}
 	return nil
+}
+
+// recordErrorMetric increments the credentials_errors_total counter if metrics
+// are configured. The reason label identifies the error category.
+func (r *VerifiableCredentialRequestReconciler) recordErrorMetric(vcReq *vcv1alpha1.VerifiableCredentialRequest, reason string) {
+	if r.Metrics != nil {
+		r.Metrics.CredentialsErrorsTotal.WithLabelValues(
+			vcReq.Namespace, vcReq.Name, reason,
+		).Inc()
+	}
+}
+
+// recordSuccessMetrics increments issuance/renewal counters and updates the
+// credential expiry gauge if metrics are configured.
+func (r *VerifiableCredentialRequestReconciler) recordSuccessMetrics(
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+	isRenewal bool,
+	parsed *credential.ParsedCredential,
+) {
+	if r.Metrics == nil {
+		return
+	}
+	labels := []string{vcReq.Namespace, vcReq.Name, vcReq.Spec.CredentialType}
+	if isRenewal {
+		r.Metrics.CredentialsRenewedTotal.WithLabelValues(labels...).Inc()
+	} else {
+		r.Metrics.CredentialsIssuedTotal.WithLabelValues(labels...).Inc()
+	}
+
+	if parsed.HasExpiry() {
+		r.Metrics.CredentialExpirySeconds.WithLabelValues(labels...).Set(
+			float64(parsed.Expiry.Unix()),
+		)
+	}
 }
 
 // SetupWithManager sets up the VerifiableCredentialRequest controller with the

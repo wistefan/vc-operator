@@ -190,12 +190,18 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "credentialissuer")
 		os.Exit(1)
 	}
+	// Initialize and register Prometheus metrics for the VC request controller.
+	vcRequestMetrics := controller.NewVCRequestMetrics()
+	controller.RegisterMetrics(vcRequestMetrics)
+
 	if err := (&controller.VerifiableCredentialRequestReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		OID4VCIClient:   oid4vci.NewClient(),
 		CredentialStore: kubestore.NewSecretStore(mgr.GetClient()),
 		EventRecorder:   mgr.GetEventRecorderFor("vcrequest-controller"),
+		Clock:           controller.RealClock{},
+		Metrics:         vcRequestMetrics,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "verifiablecredentialrequest")
 		os.Exit(1)
