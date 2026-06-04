@@ -101,6 +101,12 @@ type VerifiableCredentialRequestStatus struct {
 	// +optional
 	NextRenewalTime *metav1.Time `json:"nextRenewalTime,omitempty"`
 
+	// RenewalCount tracks the total number of times this credential has been
+	// successfully renewed. This counter is monotonically increasing and is
+	// useful for observability and auditing.
+	// +optional
+	RenewalCount int32 `json:"renewalCount,omitempty"`
+
 	// CredentialFormat is the format of the stored credential (e.g., "jwt_vc_json").
 	// +optional
 	CredentialFormat string `json:"credentialFormat,omitempty"`
@@ -126,6 +132,7 @@ type VerifiableCredentialRequestStatus struct {
 // +kubebuilder:printcolumn:name="Format",type=string,JSONPath=`.spec.format`,description="The credential format"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`,description="Whether a valid credential is stored"
 // +kubebuilder:printcolumn:name="Expiry",type=date,JSONPath=`.status.credentialExpiryTime`,description="Credential expiry time"
+// +kubebuilder:printcolumn:name="Renewals",type=integer,JSONPath=`.status.renewalCount`,description="Number of successful renewals"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // VerifiableCredentialRequest declares a Verifiable Credential that a service
