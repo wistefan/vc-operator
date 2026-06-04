@@ -52,7 +52,15 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+						IssuerRef: vcv1alpha1.LocalObjectReference{
+							Name: "test-issuer",
+						},
+						CredentialType: "VerifiableCredential",
+						TargetSecretRef: vcv1alpha1.TargetSecretReference{
+							Name: "test-target-secret",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

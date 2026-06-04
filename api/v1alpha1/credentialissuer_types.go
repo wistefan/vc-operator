@@ -21,38 +21,71 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// DefaultIssuerType is the default value for IssuerType when not specified.
+const DefaultIssuerType = "generic"
 
-// CredentialIssuerSpec defines the desired state of CredentialIssuer
+// CredentialIssuerSpec configures an OID4VCI credential issuer.
+// The operator uses this configuration to discover issuer metadata,
+// authenticate to the token endpoint, and request credentials.
 type CredentialIssuerSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// IssuerURL is the base URL of the OID4VCI credential issuer.
+	// The operator discovers metadata at {IssuerURL}/.well-known/openid-credential-issuer.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://`
+	IssuerURL string `json:"issuerURL"`
 
-	// foo is an example field of CredentialIssuer. Edit credentialissuer_types.go to remove/update
+	// IssuerType identifies the issuer implementation (e.g., "keycloak", "generic").
+	// Different issuer types may require specific handling during credential issuance.
+	// Defaults to "generic" if not specified.
+	// +kubebuilder:validation:Enum=generic;keycloak
+	// +kubebuilder:default=generic
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	IssuerType string `json:"issuerType,omitempty"`
+
+	// AuthSecretRef references a Kubernetes Secret in the same namespace containing
+	// authentication credentials for the token endpoint.
+	// The Secret must contain at least "client_id" and "client_secret" keys
+	// for client_credentials grant, or a "pre_authorized_code" key for the
+	// pre-authorized code flow.
+	AuthSecretRef SecretReference `json:"authSecretRef"`
+
+	// TokenURL optionally overrides the token endpoint URL discovered from
+	// issuer metadata. Use this when the issuer's metadata does not advertise
+	// the correct token endpoint or when a custom endpoint is required.
+	// +kubebuilder:validation:Pattern=`^https?://`
+	// +optional
+	TokenURL string `json:"tokenURL,omitempty"`
 }
 
-// CredentialIssuerStatus defines the observed state of CredentialIssuer.
+// CredentialIssuerStatus defines the observed state of a CredentialIssuer.
+// It contains the discovered metadata endpoints and standard Kubernetes conditions.
 type CredentialIssuerStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// CredentialEndpoint is the credential endpoint URL discovered from
+	// the issuer's OID4VCI metadata.
+	// +optional
+	CredentialEndpoint string `json:"credentialEndpoint,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// TokenEndpoint is the token endpoint URL discovered from
+	// the issuer's OID4VCI metadata or overridden by spec.tokenURL.
+	// +optional
+	TokenEndpoint string `json:"tokenEndpoint,omitempty"`
 
-	// conditions represent the current state of the CredentialIssuer resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
+	// SupportedCredentialTypes lists the credential type identifiers
+	// advertised by the issuer in credential_configurations_supported.
+	// +optional
+	SupportedCredentialTypes []string `json:"supportedCredentialTypes,omitempty"`
+
+	// LastMetadataFetchTime is the timestamp of the last successful
+	// metadata discovery from the issuer.
+	// +optional
+	LastMetadataFetchTime *metav1.Time `json:"lastMetadataFetchTime,omitempty"`
+
+	// Conditions represent the current state of the CredentialIssuer resource.
 	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// Condition types include:
+	// - "Ready": the issuer metadata has been successfully discovered and the auth secret is valid.
+	// - "Error": a non-transient error occurred (e.g., invalid issuer URL, missing auth secret).
 	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,27 +94,34 @@ type CredentialIssuerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Issuer URL",type=string,JSONPath=`.spec.issuerURL`,description="The URL of the OID4VCI credential issuer"
+// +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.issuerType`,description="The issuer implementation type"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`,description="Whether the issuer is ready"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// CredentialIssuer is the Schema for the credentialissuers API
+// CredentialIssuer configures an OID4VCI credential issuer that the operator
+// can use to obtain Verifiable Credentials. It discovers issuer metadata,
+// validates connectivity, and caches endpoint information for use by
+// VerifiableCredentialRequest resources.
 type CredentialIssuer struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
+	// metadata is a standard object metadata.
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of CredentialIssuer
+	// spec defines the desired configuration for the credential issuer.
 	// +required
 	Spec CredentialIssuerSpec `json:"spec"`
 
-	// status defines the observed state of CredentialIssuer
+	// status defines the observed state of the credential issuer.
 	// +optional
 	Status CredentialIssuerStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// CredentialIssuerList contains a list of CredentialIssuer
+// CredentialIssuerList contains a list of CredentialIssuer resources.
 type CredentialIssuerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
