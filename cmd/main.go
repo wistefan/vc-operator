@@ -38,6 +38,7 @@ import (
 
 	vcv1alpha1 "github.com/wistefan/vc-operator/api/v1alpha1"
 	"github.com/wistefan/vc-operator/internal/controller"
+	kubestore "github.com/wistefan/vc-operator/internal/credentialstore/kubernetes"
 	"github.com/wistefan/vc-operator/internal/oid4vci"
 	// +kubebuilder:scaffold:imports
 )
@@ -190,8 +191,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.VerifiableCredentialRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		OID4VCIClient:   oid4vci.NewClient(),
+		CredentialStore: kubestore.NewSecretStore(mgr.GetClient()),
+		EventRecorder:   mgr.GetEventRecorderFor("vcrequest-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "verifiablecredentialrequest")
 		os.Exit(1)

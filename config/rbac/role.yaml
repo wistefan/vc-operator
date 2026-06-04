@@ -16,13 +16,18 @@ rules:
   resources:
   - secrets
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - vc.vc-operator.io
   resources:
   - credentialissuers
+  - verifiablecredentialrequests
   verbs:
   - get
   - list
@@ -45,15 +50,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - vc.vc-operator.io
-  resources:
-  - verifiablecredentialrequests
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
