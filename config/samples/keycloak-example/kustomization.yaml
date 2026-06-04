@@ -1,0 +1,11 @@
+# Kustomization for the complete Keycloak example.
+# Applies the auth Secret, CredentialIssuer, and basic VerifiableCredentialRequest.
+#
+# Usage:
+#   kubectl apply -k config/samples/keycloak-example/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - auth-secret.yaml
+  - credential-issuer.yaml
+  - vcrequest.yaml
