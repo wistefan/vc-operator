@@ -38,6 +38,7 @@ import (
 
 	vcv1alpha1 "github.com/wistefan/vc-operator/api/v1alpha1"
 	"github.com/wistefan/vc-operator/internal/controller"
+	"github.com/wistefan/vc-operator/internal/oid4vci"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -180,8 +181,10 @@ func main() {
 	}
 
 	if err := (&controller.CredentialIssuerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		OID4VCIClient: oid4vci.NewClient(),
+		EventRecorder: mgr.GetEventRecorderFor("credentialissuer-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "credentialissuer")
 		os.Exit(1)
