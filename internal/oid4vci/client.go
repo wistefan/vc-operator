@@ -1,0 +1,64 @@
+package oid4vci
+
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+// Client defines the high-level interface for interacting with an OID4VCI
+// credential issuer. It supports metadata discovery, token acquisition,
+// and credential issuance requests.
+type Client interface {
+	// DiscoverMetadata fetches and parses the OID4VCI credential issuer metadata
+	// from the well-known endpoint at {issuerURL}/.well-known/openid-credential-issuer.
+	DiscoverMetadata(ctx context.Context, issuerURL string) (*IssuerMetadata, error)
+
+	// ObtainAccessToken requests an OAuth 2.0 access token from the given token endpoint
+	// using the specified authentication parameters (client credentials or pre-authorized code).
+	ObtainAccessToken(ctx context.Context, tokenURL string, auth TokenAuth) (*TokenResponse, error)
+
+	// RequestCredential sends a credential issuance request to the given credential endpoint,
+	// authenticated with the provided access token, and returns the issued credential.
+	RequestCredential(ctx context.Context, credentialURL string, accessToken string, request CredentialRequest) (*CredentialResponse, error)
+}
+
+// ClientOption is a functional option for configuring an oid4vciClient.
+type ClientOption func(*oid4vciClient)
+
+// WithHTTPClient sets a custom http.Client for the OID4VCI client.
+// This is primarily useful for testing with mock HTTP servers.
+func WithHTTPClient(httpClient *http.Client) ClientOption {
+	return func(c *oid4vciClient) {
+		c.httpClient = httpClient
+	}
+}
+
+// WithTimeout sets the HTTP request timeout for the OID4VCI client.
+// If not specified, DefaultHTTPTimeout is used.
+func WithTimeout(timeout time.Duration) ClientOption {
+	return func(c *oid4vciClient) {
+		c.httpClient.Timeout = timeout
+	}
+}
+
+// NewClient creates a new OID4VCI client with the given options.
+// If no http.Client is provided via WithHTTPClient, a default client
+// with DefaultHTTPTimeout is used.
+func NewClient(opts ...ClientOption) Client {
+	c := &oid4vciClient{
+		httpClient: &http.Client{
+			Timeout: DefaultHTTPTimeout,
+		},
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// oid4vciClient is the default implementation of the Client interface.
+// It uses an http.Client for all HTTP communication with OID4VCI endpoints.
+type oid4vciClient struct {
+	httpClient *http.Client
+}
