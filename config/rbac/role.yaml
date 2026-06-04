@@ -5,13 +5,25 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - vc.vc-operator.io
   resources:
   - credentialissuers
-  - verifiablecredentialrequests
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch
@@ -33,3 +45,15 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - vc.vc-operator.io
+  resources:
+  - verifiablecredentialrequests
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
