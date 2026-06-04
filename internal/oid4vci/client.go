@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Client defines the high-level interface for interacting with an OID4VCI
@@ -42,6 +44,9 @@ func WithTimeout(timeout time.Duration) ClientOption {
 	}
 }
 
+// packageLogger is a package-level logger for standalone functions without context.
+var packageLogger = logf.Log.WithName("oid4vci")
+
 // NewClient creates a new OID4VCI client with the given options.
 // If no http.Client is provided via WithHTTPClient, a default client
 // with DefaultHTTPTimeout is used.
@@ -54,6 +59,7 @@ func NewClient(opts ...ClientOption) Client {
 	for _, opt := range opts {
 		opt(c)
 	}
+	packageLogger.V(1).Info("OID4VCI client created", "timeout", c.httpClient.Timeout)
 	return c
 }
 

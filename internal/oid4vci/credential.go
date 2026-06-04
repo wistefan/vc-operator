@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // maxCredentialResponseBytes is the maximum size of a credential response body
@@ -39,13 +40,23 @@ const (
 // GenerateProofJWT). The method returns the parsed credential response or an error
 // if the request fails.
 func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL string, accessToken string, request CredentialRequest) (*CredentialResponse, error) {
+	logger := log.FromContext(ctx).WithName("oid4vci")
+
+	logger.V(1).Info("Requesting credential",
+		"credentialURL", credentialURL,
+		"credentialConfigurationID", request.CredentialConfigurationID,
+		"format", request.Format,
+	)
+
 	reqBody, err := json.Marshal(request)
 	if err != nil {
+		logger.Error(err, "Failed to marshal credential request")
 		return nil, fmt.Errorf("%w: error marshaling request: %v", ErrCredentialRequest, err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, credentialURL, bytes.NewReader(reqBody))
 	if err != nil {
+		logger.Error(err, "Failed to create credential HTTP request", "credentialURL", credentialURL)
 		return nil, fmt.Errorf("%w: %v", ErrCredentialRequest, err)
 	}
 	httpReq.Header.Set("Content-Type", ContentTypeJSON)
@@ -54,23 +65,36 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		logger.Error(err, "Failed to execute credential request", "credentialURL", credentialURL)
 		return nil, fmt.Errorf("%w: %v", ErrCredentialRequest, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %v", ErrCredentialRequest, parseHTTPError(resp))
+		httpErr := parseHTTPError(resp)
+		logger.Error(httpErr, "Credential endpoint returned non-OK status",
+			"credentialURL", credentialURL,
+			"statusCode", resp.StatusCode,
+		)
+		return nil, fmt.Errorf("%w: %v", ErrCredentialRequest, httpErr)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCredentialResponseBytes))
 	if err != nil {
+		logger.Error(err, "Failed to read credential response body", "credentialURL", credentialURL)
 		return nil, fmt.Errorf("%w: error reading response body: %v", ErrCredentialRequest, err)
 	}
 
 	var credResp CredentialResponse
 	if err := json.Unmarshal(body, &credResp); err != nil {
+		logger.Error(err, "Failed to parse credential response JSON", "credentialURL", credentialURL, "bodyLength", len(body))
 		return nil, fmt.Errorf("%w: %v", ErrInvalidResponse, err)
 	}
+
+	logger.Info("Successfully received credential",
+		"format", credResp.Format,
+		"hasCNonce", credResp.CNonce != "",
+	)
 
 	return &credResp, nil
 }
@@ -83,6 +107,12 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 // The issuerURL should be the credential issuer identifier (from metadata).
 // The cNonce is the nonce value received from the token endpoint response.
 func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce string) (string, error) {
+	packageLogger.V(1).Info("Generating proof-of-possession JWT",
+		"audience", issuerURL,
+		"algorithm", ProofAlgorithmES256,
+		"curve", privateKey.Curve.Params().Name,
+	)
+
 	now := time.Now()
 
 	// Build JWK thumbprint for the public key
@@ -100,9 +130,11 @@ func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce str
 
 	signedToken, err := token.SignedString(privateKey)
 	if err != nil {
+		packageLogger.Error(err, "Failed to sign proof-of-possession JWT", "audience", issuerURL)
 		return "", fmt.Errorf("%w: %v", ErrProofGeneration, err)
 	}
 
+	packageLogger.V(1).Info("Successfully generated proof-of-possession JWT", "audience", issuerURL)
 	return signedToken, nil
 }
 
