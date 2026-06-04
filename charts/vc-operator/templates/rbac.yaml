@@ -1,0 +1,197 @@
+{{- if .Values.rbac.create -}}
+---
+# ClusterRole: manager-role
+# Grants the operator permissions to manage CredentialIssuers,
+# VerifiableCredentialRequests, Secrets, and Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+rules:
+  # Permission to create and patch Events for recording state transitions.
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  # Permission to manage Secrets used for storing obtained credentials
+  # and reading authentication credentials for issuers.
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Permission to manage CredentialIssuer and VerifiableCredentialRequest CRs.
+  - apiGroups:
+      - vc.vc-operator.io
+    resources:
+      - credentialissuers
+      - verifiablecredentialrequests
+    verbs:
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Permission to update finalizers on managed CRs.
+  - apiGroups:
+      - vc.vc-operator.io
+    resources:
+      - credentialissuers/finalizers
+      - verifiablecredentialrequests/finalizers
+    verbs:
+      - update
+  # Permission to read and update status subresources on managed CRs.
+  - apiGroups:
+      - vc.vc-operator.io
+    resources:
+      - credentialissuers/status
+      - verifiablecredentialrequests/status
+    verbs:
+      - get
+      - patch
+      - update
+---
+# ClusterRoleBinding: binds the manager-role to the operator service account.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "vc-operator.fullname" . }}-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vc-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role: leader-election-role
+# Grants permissions for leader election using ConfigMaps and Leases.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+rules:
+  # Permission to manage ConfigMaps used as leader election locks.
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # Permission to manage Leases used for leader election.
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # Permission to create Events during leader election transitions.
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+# RoleBinding: binds the leader-election-role to the operator service account.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vc-operator.fullname" . }}-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vc-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# ClusterRole: metrics-auth-role
+# Grants permissions for authenticating and authorizing metrics access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-metrics-auth-role
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+rules:
+  # Permission to create TokenReviews for authentication.
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+  # Permission to create SubjectAccessReviews for authorization.
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - subjectaccessreviews
+    verbs:
+      - create
+---
+# ClusterRoleBinding: binds metrics-auth-role to the operator service account.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-metrics-auth-rolebinding
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "vc-operator.fullname" . }}-metrics-auth-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vc-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# ClusterRole: metrics-reader
+# Grants read access to the /metrics endpoint.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-metrics-reader
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs:
+      - "/metrics"
+    verbs:
+      - get
+{{- end }}

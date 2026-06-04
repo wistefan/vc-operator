@@ -4,28 +4,35 @@ ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /workspace
-# Copy the Go Modules manifests
+
+# Copy the Go Modules manifests first to leverage Docker layer caching.
+# Dependencies are re-downloaded only when go.mod or go.sum change.
 COPY go.mod go.mod
 COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
-# Copy the Go source (relies on .dockerignore to filter)
+# Copy the Go source (relies on .dockerignore to filter).
 COPY . .
 
-# Build
-# the GOARCH has no default value to allow the binary to be built according to the host where the command
-# was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+# Build a statically linked binary for the target platform.
+# CGO is disabled so the binary has no C library dependency,
+# making it safe to run on a distroless base image.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o manager cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
+# Runtime stage: use distroless for a minimal, secure container image.
+# The distroless/static image contains no shell or package manager,
+# reducing the attack surface. See https://github.com/GoogleContainerTools/distroless
 FROM gcr.io/distroless/static:nonroot
+
+LABEL org.opencontainers.image.source="https://github.com/wistefan/vc-operator"
+LABEL org.opencontainers.image.description="VC Operator - Kubernetes operator for Verifiable Credentials via OID4VCI"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 WORKDIR /
 COPY --from=builder /workspace/manager .
+
+# Run as non-root user (65532 is the nonroot user in distroless).
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
