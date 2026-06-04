@@ -93,6 +93,14 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the k3s cluster used for e2e tests
 	@/usr/local/bin/k3s-uninstall.sh || true
 
+## Integration test timeout in seconds.
+INTEGRATION_TEST_TIMEOUT ?= 300s
+
+.PHONY: test-integration
+test-integration: manifests generate fmt vet setup-envtest ## Run integration tests with mock OID4VCI server and envtest.
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
+		go test -tags=integration ./test/integration/ -v -ginkgo.v -timeout $(INTEGRATION_TEST_TIMEOUT)
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
