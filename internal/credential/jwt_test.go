@@ -26,7 +26,7 @@ import (
 
 // buildJWT constructs a compact-serialized JWT from header and payload maps.
 // The signature segment is a fixed placeholder since the parser does not verify signatures.
-func buildJWT(header, payload map[string]interface{}) string {
+func buildJWT(header, payload map[string]any) string {
 	headerJSON, _ := json.Marshal(header)
 	payloadJSON, _ := json.Marshal(payload)
 
@@ -51,8 +51,8 @@ func TestParseJWTCredential(t *testing.T) {
 		{
 			name: "JWT with both exp and iat claims",
 			rawJWT: buildJWT(
-				map[string]interface{}{"alg": "ES256", "typ": "JWT"},
-				map[string]interface{}{
+				map[string]any{"alg": "ES256", "typ": "JWT"},
+				map[string]any{
 					ClaimExp: float64(expTime.Unix()),
 					ClaimIat: float64(iatTime.Unix()),
 					"iss":    "https://issuer.example.com",
@@ -66,8 +66,8 @@ func TestParseJWTCredential(t *testing.T) {
 		{
 			name: "JWT with only expiry",
 			rawJWT: buildJWT(
-				map[string]interface{}{"alg": "ES256"},
-				map[string]interface{}{
+				map[string]any{"alg": "ES256"},
+				map[string]any{
 					ClaimExp: float64(expTime.Unix()),
 				},
 			),
@@ -78,8 +78,8 @@ func TestParseJWTCredential(t *testing.T) {
 		{
 			name: "JWT without expiry claim",
 			rawJWT: buildJWT(
-				map[string]interface{}{"alg": "ES256"},
-				map[string]interface{}{
+				map[string]any{"alg": "ES256"},
+				map[string]any{
 					ClaimIat: float64(iatTime.Unix()),
 				},
 			),
@@ -90,8 +90,8 @@ func TestParseJWTCredential(t *testing.T) {
 		{
 			name: "JWT with empty payload (minimal)",
 			rawJWT: buildJWT(
-				map[string]interface{}{"alg": "none"},
-				map[string]interface{}{},
+				map[string]any{"alg": "none"},
+				map[string]any{},
 			),
 			wantExpiry: false,
 			wantIat:    false,
@@ -235,8 +235,8 @@ func TestParsedCredential_HasExpiry(t *testing.T) {
 
 func TestParseJWTCredential_RawJWTPreserved(t *testing.T) {
 	jwt := buildJWT(
-		map[string]interface{}{"alg": "ES256"},
-		map[string]interface{}{ClaimExp: float64(time.Now().Add(1 * time.Hour).Unix())},
+		map[string]any{"alg": "ES256"},
+		map[string]any{ClaimExp: float64(time.Now().Add(1 * time.Hour).Unix())},
 	)
 
 	parsed, err := ParseJWTCredential(jwt)
@@ -253,15 +253,15 @@ func TestParseJWTCredential_IgnoresNonExpiryFields(t *testing.T) {
 	// The parser should not fail when extra claims (iss, sub, vc, etc.) are
 	// present — it simply ignores them and only extracts exp and iat.
 	jwt := buildJWT(
-		map[string]interface{}{"alg": "ES256", "typ": "JWT", "kid": "key-1"},
-		map[string]interface{}{
+		map[string]any{"alg": "ES256", "typ": "JWT", "kid": "key-1"},
+		map[string]any{
 			ClaimExp: float64(time.Now().Add(1 * time.Hour).Unix()),
 			ClaimIat: float64(time.Now().Unix()),
 			"iss":    "https://issuer.example.com",
 			"sub":    "did:example:holder123",
 			"jti":    "urn:uuid:abc-123",
-			"vc": map[string]interface{}{
-				"type": []interface{}{"VerifiableCredential"},
+			"vc": map[string]any{
+				"type": []any{"VerifiableCredential"},
 			},
 		},
 	)
@@ -282,37 +282,37 @@ func TestParseJWTCredential_IgnoresNonExpiryFields(t *testing.T) {
 func TestExtractTimeClaim_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
-		claims map[string]interface{}
+		claims map[string]any
 		key    string
 		isZero bool
 	}{
 		{
 			name:   "missing claim",
-			claims: map[string]interface{}{},
+			claims: map[string]any{},
 			key:    ClaimExp,
 			isZero: true,
 		},
 		{
 			name:   "zero timestamp",
-			claims: map[string]interface{}{ClaimExp: float64(0)},
+			claims: map[string]any{ClaimExp: float64(0)},
 			key:    ClaimExp,
 			isZero: true,
 		},
 		{
 			name:   "negative timestamp",
-			claims: map[string]interface{}{ClaimExp: float64(-1)},
+			claims: map[string]any{ClaimExp: float64(-1)},
 			key:    ClaimExp,
 			isZero: true,
 		},
 		{
 			name:   "string instead of number",
-			claims: map[string]interface{}{ClaimExp: "not-a-number"},
+			claims: map[string]any{ClaimExp: "not-a-number"},
 			key:    ClaimExp,
 			isZero: true,
 		},
 		{
 			name:   "valid timestamp",
-			claims: map[string]interface{}{ClaimExp: float64(1700000000)},
+			claims: map[string]any{ClaimExp: float64(1700000000)},
 			key:    ClaimExp,
 			isZero: false,
 		},

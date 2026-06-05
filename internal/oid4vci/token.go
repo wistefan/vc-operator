@@ -69,7 +69,7 @@ func (c *oid4vciClient) ObtainAccessToken(ctx context.Context, tokenURL string, 
 		logger.Error(err, "Failed to execute token request", "tokenURL", tokenURL)
 		return nil, fmt.Errorf("%w: %v", ErrTokenAcquisition, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		httpErr := parseHTTPError(resp)

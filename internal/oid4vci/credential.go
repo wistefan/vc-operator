@@ -68,7 +68,7 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 		logger.Error(err, "Failed to execute credential request", "credentialURL", credentialURL)
 		return nil, fmt.Errorf("%w: %v", ErrCredentialRequest, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		httpErr := parseHTTPError(resp)
@@ -140,8 +140,8 @@ func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce str
 
 // buildJWKFromPublicKey constructs a JWK (JSON Web Key) representation
 // of an ECDSA P-256 public key for inclusion in the JWT header.
-func buildJWKFromPublicKey(pub *ecdsa.PublicKey) map[string]interface{} {
-	return map[string]interface{}{
+func buildJWKFromPublicKey(pub *ecdsa.PublicKey) map[string]any {
+	return map[string]any{
 		"kty": "EC",
 		"crv": "P-256",
 		"x":   base64URLEncode(pub.X.Bytes(), coordByteLength),
@@ -169,7 +169,7 @@ func base64URLEncode(b []byte, length int) string {
 // This is primarily useful for testing. It extracts the public key
 // from the JWT's jwk header and verifies the signature.
 func VerifyProofJWT(tokenString string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -179,7 +179,7 @@ func VerifyProofJWT(tokenString string) (jwt.MapClaims, error) {
 			return nil, fmt.Errorf("missing jwk header")
 		}
 
-		jwkMap, ok := jwkRaw.(map[string]interface{})
+		jwkMap, ok := jwkRaw.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("invalid jwk header format")
 		}
@@ -199,7 +199,7 @@ func VerifyProofJWT(tokenString string) (jwt.MapClaims, error) {
 }
 
 // parseJWKToPublicKey reconstructs an ECDSA public key from a JWK map.
-func parseJWKToPublicKey(jwk map[string]interface{}) (*ecdsa.PublicKey, error) {
+func parseJWKToPublicKey(jwk map[string]any) (*ecdsa.PublicKey, error) {
 	xStr, ok := jwk["x"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid x coordinate")

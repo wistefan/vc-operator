@@ -161,18 +161,18 @@ func (m *MockOID4VCIIssuer) handleMetadata(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	metadata := map[string]interface{}{
+	metadata := map[string]any{
 		"credential_issuer":   m.Server.URL,
 		"credential_endpoint": m.Server.URL + "/credential",
 		"token_endpoint":      m.Server.URL + "/token",
-		"credential_configurations_supported": map[string]interface{}{
-			defaultCredentialType: map[string]interface{}{
+		"credential_configurations_supported": map[string]any{
+			defaultCredentialType: map[string]any{
 				"format": defaultCredentialFormat,
-				"credential_definition": map[string]interface{}{
+				"credential_definition": map[string]any{
 					"type": []string{"VerifiableCredential"},
 				},
-				"proof_types_supported": map[string]interface{}{
-					"jwt": map[string]interface{}{
+				"proof_types_supported": map[string]any{
+					"jwt": map[string]any{
 						"proof_signing_alg_values_supported": []string{"ES256"},
 					},
 				},
@@ -223,7 +223,7 @@ func (m *MockOID4VCIIssuer) handleToken(w http.ResponseWriter, r *http.Request) 
 
 	// Return a successful token response.
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"access_token": defaultAccessToken,
 		"token_type":   "Bearer",
 		"expires_in":   mockTokenExpiresIn,
@@ -277,7 +277,7 @@ func (m *MockOID4VCIIssuer) handleCredential(w http.ResponseWriter, r *http.Requ
 	jwtVC := buildTestJWT(m.Server.URL, now, now.Add(expiry), count)
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"credential": jwtVC,
 		"format":     defaultCredentialFormat,
 	}); err != nil {
@@ -306,15 +306,15 @@ func buildTestJWT(issuer string, iat, exp time.Time, counter int32) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"ES256","typ":"JWT"}`))
 
 	// Payload with standard and VC-specific claims.
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"iss":     issuer,
 		"sub":     "test-subject",
 		"iat":     iat.Unix(),
 		"exp":     exp.Unix(),
 		"counter": counter,
-		"vc": map[string]interface{}{
+		"vc": map[string]any{
 			"type": []string{"VerifiableCredential"},
-			"credentialSubject": map[string]interface{}{
+			"credentialSubject": map[string]any{
 				"id":   fmt.Sprintf("did:example:subject-%d", counter),
 				"name": "Test Subject",
 			},

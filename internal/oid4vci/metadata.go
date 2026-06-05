@@ -39,7 +39,7 @@ func (c *oid4vciClient) DiscoverMetadata(ctx context.Context, issuerURL string) 
 		logger.Error(err, "Failed to fetch issuer metadata", "metadataURL", metadataURL)
 		return nil, fmt.Errorf("%w: %v", ErrMetadataFetch, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		httpErr := parseHTTPError(resp)

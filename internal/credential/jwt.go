@@ -93,7 +93,7 @@ func ParseJWTCredential(rawJWT string) (*ParsedCredential, error) {
 
 // decodeJWTSegment decodes a Base64url-encoded JWT segment and parses it
 // as a JSON object. It handles both padded and unpadded Base64url encoding.
-func decodeJWTSegment(segment string) (map[string]interface{}, error) {
+func decodeJWTSegment(segment string) (map[string]any, error) {
 	// Base64url decode (JWT uses raw URL encoding without padding).
 	decoded, err := base64.RawURLEncoding.DecodeString(segment)
 	if err != nil {
@@ -104,7 +104,7 @@ func decodeJWTSegment(segment string) (map[string]interface{}, error) {
 		}
 	}
 
-	var claims map[string]interface{}
+	var claims map[string]any
 	if err := json.Unmarshal(decoded, &claims); err != nil {
 		return nil, fmt.Errorf("JSON unmarshal failed: %w", err)
 	}
@@ -129,7 +129,7 @@ func addBase64Padding(s string) string {
 // converts it to a time.Time. Handles both integer and floating-point
 // representations of the timestamp. Returns zero time if the claim is
 // absent or not a valid number.
-func extractTimeClaim(claims map[string]interface{}, key string) time.Time {
+func extractTimeClaim(claims map[string]any, key string) time.Time {
 	val, ok := claims[key]
 	if !ok {
 		return time.Time{}

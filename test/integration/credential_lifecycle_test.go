@@ -181,7 +181,7 @@ var _ = Describe("Credential Lifecycle", func() {
 			credJWT := string(secret.Data[credentialKey])
 			payload := decodeJWTPayload(credJWT)
 			Expect(payload).To(HaveKey("vc"))
-			vcClaim, ok := payload["vc"].(map[string]interface{})
+			vcClaim, ok := payload["vc"].(map[string]any)
 			Expect(ok).To(BeTrue(), "vc claim should be a JSON object")
 			Expect(vcClaim).To(HaveKey("type"))
 		})
@@ -554,7 +554,7 @@ var _ = Describe("Credential Lifecycle", func() {
 // decodeJWTPayload extracts and decodes the payload segment of a
 // compact-serialized JWT for test assertions. It returns the payload
 // claims as a map. Fails the test if the JWT is malformed.
-func decodeJWTPayload(jwtStr string) map[string]interface{} {
+func decodeJWTPayload(jwtStr string) map[string]any {
 	segments := strings.Split(jwtStr, ".")
 	Expect(segments).To(HaveLen(jwtSegmentCount), "JWT should have 3 segments")
 
@@ -562,7 +562,7 @@ func decodeJWTPayload(jwtStr string) map[string]interface{} {
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(segments[1])
 	Expect(err).NotTo(HaveOccurred(), "Failed to decode JWT payload segment")
 
-	var payload map[string]interface{}
+	var payload map[string]any
 	Expect(json.Unmarshal(payloadBytes, &payload)).To(Succeed(), "Failed to parse JWT payload JSON")
 	return payload
 }

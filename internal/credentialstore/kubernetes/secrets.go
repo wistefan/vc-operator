@@ -24,6 +24,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -284,9 +285,7 @@ func mergeLabels(target *corev1.Secret, source map[string]string) {
 	if target.Labels == nil {
 		target.Labels = make(map[string]string)
 	}
-	for k, v := range source {
-		target.Labels[k] = v
-	}
+	maps.Copy(target.Labels, source)
 }
 
 // mergeAnnotations merges source annotations into target, preserving
@@ -295,7 +294,5 @@ func mergeAnnotations(target *corev1.Secret, source map[string]string) {
 	if target.Annotations == nil {
 		target.Annotations = make(map[string]string)
 	}
-	for k, v := range source {
-		target.Annotations[k] = v
-	}
+	maps.Copy(target.Annotations, source)
 }

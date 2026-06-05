@@ -142,7 +142,7 @@ func LoadImageToK3sCluster(name string) error {
 	if _, err := Run(saveCmd); err != nil {
 		return fmt.Errorf("failed to save docker image %q: %w", name, err)
 	}
-	defer os.Remove(imageTar)
+	defer func() { _ = os.Remove(imageTar) }()
 
 	k3sBinary := defaultK3sBinary
 	if v, ok := os.LookupEnv("K3S"); ok {

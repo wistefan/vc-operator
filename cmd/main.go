@@ -185,7 +185,7 @@ func main() {
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		OID4VCIClient: oid4vci.NewClient(),
-		EventRecorder: mgr.GetEventRecorderFor("credentialissuer-controller"),
+		EventRecorder: mgr.GetEventRecorder("credentialissuer-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "credentialissuer")
 		os.Exit(1)
@@ -199,7 +199,7 @@ func main() {
 		Scheme:          mgr.GetScheme(),
 		OID4VCIClient:   oid4vci.NewClient(),
 		CredentialStore: kubestore.NewSecretStore(mgr.GetClient()),
-		EventRecorder:   mgr.GetEventRecorderFor("vcrequest-controller"),
+		EventRecorder:   mgr.GetEventRecorder("vcrequest-controller"),
 		Clock:           controller.RealClock{},
 		Metrics:         vcRequestMetrics,
 	}).SetupWithManager(mgr); err != nil {

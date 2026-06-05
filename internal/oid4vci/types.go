@@ -186,7 +186,7 @@ type CredentialResponse struct {
 	// Credential is the issued verifiable credential.
 	// Its type depends on the format: a string for JWT-based formats,
 	// or a JSON object for JSON-LD formats.
-	Credential interface{} `json:"credential"`
+	Credential any `json:"credential"`
 
 	// Format is the format of the issued credential.
 	Format string `json:"format,omitempty"`

@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -51,6 +51,22 @@ const (
 	// ConfigErrorRequeueInterval is the interval to wait before retrying
 	// reconciliation after a non-transient configuration error.
 	ConfigErrorRequeueInterval = 1 * time.Minute
+
+	// ActionResolveIssuer is the event action recorded when the controller
+	// resolves the referenced CredentialIssuer for a VerifiableCredentialRequest.
+	ActionResolveIssuer = "ResolveIssuer"
+
+	// ActionObtainToken is the event action recorded when the controller
+	// obtains an OAuth 2.0 access token from the token endpoint.
+	ActionObtainToken = "ObtainToken"
+
+	// ActionRequestCredential is the event action recorded when the controller
+	// requests a credential from the OID4VCI credential endpoint.
+	ActionRequestCredential = "RequestCredential"
+
+	// ActionStoreCredential is the event action recorded when the controller
+	// stores a credential via the CredentialStore backend.
+	ActionStoreCredential = "StoreCredential"
 )
 
 // VerifiableCredentialRequestReconciler reconciles VerifiableCredentialRequest
@@ -62,7 +78,7 @@ type VerifiableCredentialRequestReconciler struct {
 	Scheme          *runtime.Scheme
 	OID4VCIClient   oid4vci.Client
 	CredentialStore credentialstore.CredentialStore
-	EventRecorder   record.EventRecorder
+	EventRecorder   events.EventRecorder
 
 	// Clock provides an abstraction over time.Now() for testability.
 	// If nil, RealClock is used. In tests, set to a FakeClock to
@@ -88,7 +104,7 @@ func (r *VerifiableCredentialRequestReconciler) now() time.Time {
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=verifiablecredentialrequests/finalizers,verbs=update
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=credentialissuers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create;get;list;watch;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile performs a single reconciliation cycle for a VerifiableCredentialRequest.
 // It obtains a credential from the referenced CredentialIssuer via OID4VCI,
@@ -339,7 +355,7 @@ func (r *VerifiableCredentialRequestReconciler) handleIssuerError(
 
 	if ie, ok := err.(*issuerError); ok {
 		log.Info("Issuer not available", "reason", ie.reason, "message", ie.message)
-		r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, ie.reason, ie.message)
+		r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, ie.reason, ActionResolveIssuer, ie.message)
 		r.recordErrorMetric(vcReq, ie.reason)
 
 		if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, ie.reason, ie.message); statusErr != nil {
@@ -365,7 +381,7 @@ func (r *VerifiableCredentialRequestReconciler) handleAuthError(
 
 	msg := fmt.Sprintf("Failed to read auth credentials: %v", err)
 	log.Info("Auth credential error", "error", err)
-	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretNotFound, msg)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretNotFound, ActionObtainToken, msg)
 	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonAuthSecretNotFound)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonAuthSecretNotFound, msg); statusErr != nil {
@@ -386,7 +402,7 @@ func (r *VerifiableCredentialRequestReconciler) handleTokenError(
 
 	msg := fmt.Sprintf("Failed to obtain access token: %v", err)
 	log.Error(err, "Token request failed")
-	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonTokenRequestFailed, msg)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonTokenRequestFailed, ActionObtainToken, msg)
 	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonTokenRequestFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonTokenRequestFailed, msg); statusErr != nil {
@@ -407,7 +423,7 @@ func (r *VerifiableCredentialRequestReconciler) handleCredentialRequestError(
 
 	msg := fmt.Sprintf("Failed to request credential: %v", err)
 	log.Error(err, "Credential request failed")
-	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonCredentialRequestFailed, msg)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonCredentialRequestFailed, ActionRequestCredential, msg)
 	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonCredentialRequestFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonCredentialRequestFailed, msg); statusErr != nil {
@@ -427,7 +443,7 @@ func (r *VerifiableCredentialRequestReconciler) handlePermanentError(
 	log := logf.FromContext(ctx)
 
 	log.Info("Permanent error during credential acquisition", "reason", reason, "message", message)
-	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, reason, message)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, reason, ActionRequestCredential, message)
 	r.recordErrorMetric(vcReq, reason)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, reason, message); statusErr != nil {
@@ -448,7 +464,7 @@ func (r *VerifiableCredentialRequestReconciler) handleStorageError(
 
 	msg := fmt.Sprintf("Failed to store credential: %v", err)
 	log.Error(err, "Credential storage failed")
-	r.EventRecorder.Event(vcReq, corev1.EventTypeWarning, vcv1alpha1.ReasonStorageFailed, msg)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonStorageFailed, ActionStoreCredential, msg)
 	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonStorageFailed)
 
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonStorageFailed, msg); statusErr != nil {
@@ -532,10 +548,10 @@ func (r *VerifiableCredentialRequestReconciler) handleSuccess(
 	eventMsg := fmt.Sprintf("Credential %q obtained and stored in %s/%s",
 		vcReq.Spec.CredentialType, vcReq.Namespace, vcReq.Spec.TargetSecretRef.Name)
 	if isRenewal {
-		r.EventRecorder.Event(vcReq, corev1.EventTypeNormal, vcv1alpha1.ReasonCredentialObtained,
+		r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeNormal, vcv1alpha1.ReasonCredentialObtained, ActionRequestCredential,
 			"Renewed: "+eventMsg)
 	} else {
-		r.EventRecorder.Event(vcReq, corev1.EventTypeNormal, vcv1alpha1.ReasonCredentialObtained, eventMsg)
+		r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeNormal, vcv1alpha1.ReasonCredentialObtained, ActionRequestCredential, eventMsg)
 	}
 	r.recordSuccessMetrics(vcReq, isRenewal, parsed)
 

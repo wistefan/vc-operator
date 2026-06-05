@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -58,6 +58,14 @@ const (
 	// AuthSecretKeyPreAuthorizedCode is the expected data key in the authentication
 	// Secret containing the OID4VCI pre-authorized code.
 	AuthSecretKeyPreAuthorizedCode = "pre_authorized_code"
+
+	// ActionValidateAuthSecret is the event action recorded when the controller
+	// validates the authentication Secret referenced by a CredentialIssuer.
+	ActionValidateAuthSecret = "ValidateAuthSecret"
+
+	// ActionDiscoverMetadata is the event action recorded when the controller
+	// performs OID4VCI metadata discovery for a CredentialIssuer.
+	ActionDiscoverMetadata = "DiscoverMetadata"
 )
 
 // CredentialIssuerReconciler reconciles CredentialIssuer resources.
@@ -69,14 +77,14 @@ type CredentialIssuerReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	OID4VCIClient oid4vci.Client
-	EventRecorder record.EventRecorder
+	EventRecorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=credentialissuers,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=credentialissuers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=credentialissuers/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile performs a single reconciliation cycle for a CredentialIssuer resource.
 // It validates the referenced auth Secret, discovers OID4VCI metadata from the
@@ -145,7 +153,7 @@ func (r *CredentialIssuerReconciler) validateAuthSecret(ctx context.Context, iss
 		if apierrors.IsNotFound(err) {
 			msg := fmt.Sprintf("Auth Secret %q not found in namespace %q", secretKey.Name, secretKey.Namespace)
 			log.Info("Auth secret not found", "secret", secretKey)
-			r.EventRecorder.Event(issuer, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretNotFound, msg)
+			r.EventRecorder.Eventf(issuer, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretNotFound, ActionValidateAuthSecret, msg)
 			if statusErr := r.setErrorStatus(ctx, issuer, vcv1alpha1.ReasonAuthSecretNotFound, msg); statusErr != nil {
 				return statusErr
 			}
@@ -166,7 +174,7 @@ func (r *CredentialIssuerReconciler) validateAuthSecret(ctx context.Context, iss
 			secretKey.Name, AuthSecretKeyClientID, AuthSecretKeyClientSecret, AuthSecretKeyPreAuthorizedCode,
 		)
 		log.Info("Auth secret is missing required keys", "secret", secretKey)
-		r.EventRecorder.Event(issuer, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretInvalid, msg)
+		r.EventRecorder.Eventf(issuer, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonAuthSecretInvalid, ActionValidateAuthSecret, msg)
 		if statusErr := r.setErrorStatus(ctx, issuer, vcv1alpha1.ReasonAuthSecretInvalid, msg); statusErr != nil {
 			return statusErr
 		}
@@ -190,7 +198,7 @@ func (r *CredentialIssuerReconciler) handleMetadataError(
 
 	msg := fmt.Sprintf("Failed to discover OID4VCI metadata from %s: %v", issuer.Spec.IssuerURL, discoverErr)
 	log.Error(discoverErr, "Metadata discovery failed", "issuerURL", issuer.Spec.IssuerURL)
-	r.EventRecorder.Event(issuer, corev1.EventTypeWarning, vcv1alpha1.ReasonMetadataFetchFailed, msg)
+	r.EventRecorder.Eventf(issuer, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonMetadataFetchFailed, ActionDiscoverMetadata, msg)
 
 	if statusErr := r.setErrorStatus(ctx, issuer, vcv1alpha1.ReasonMetadataFetchFailed, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -246,7 +254,7 @@ func (r *CredentialIssuerReconciler) handleMetadataSuccess(
 		return ctrl.Result{}, err
 	}
 
-	r.EventRecorder.Eventf(issuer, corev1.EventTypeNormal, vcv1alpha1.ReasonMetadataDiscovered,
+	r.EventRecorder.Eventf(issuer, nil, corev1.EventTypeNormal, vcv1alpha1.ReasonMetadataDiscovered, ActionDiscoverMetadata,
 		"Discovered OID4VCI metadata: credential_endpoint=%s, token_endpoint=%s, %d credential type(s) supported",
 		metadata.CredentialEndpoint, tokenEndpoint, len(supportedTypes))
 

@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -98,7 +98,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 	var (
 		typeNamespacedName types.NamespacedName
 		mockClient         *mockOID4VCIClient
-		eventRecorder      *record.FakeRecorder
+		eventRecorder      *events.FakeRecorder
 		reconciler         *CredentialIssuerReconciler
 	)
 
@@ -108,7 +108,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 			Namespace: issuerNs,
 		}
 		mockClient = &mockOID4VCIClient{}
-		eventRecorder = record.NewFakeRecorder(fakeEventBufferSize)
+		eventRecorder = events.NewFakeRecorder(fakeEventBufferSize)
 		reconciler = &CredentialIssuerReconciler{
 			Client:        k8sClient,
 			Scheme:        k8sClient.Scheme(),
@@ -488,7 +488,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
 				OID4VCIClient: failingClient,
-				EventRecorder: record.NewFakeRecorder(fakeEventBufferSize),
+				EventRecorder: events.NewFakeRecorder(fakeEventBufferSize),
 			}
 			_, _ = failReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,

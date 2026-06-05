@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -88,7 +88,7 @@ func (m *mockCredentialStore) Delete(ctx context.Context, ref credentialstore.Ta
 
 // buildTestJWT creates a compact-serialized JWT with the given claims for testing.
 // It uses a dummy header and signature — only the payload is meaningful for parsing.
-func buildTestJWT(claims map[string]interface{}) string {
+func buildTestJWT(claims map[string]any) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"ES256","typ":"JWT"}`))
 
 	claimsJSON, _ := json.Marshal(claims)
@@ -102,7 +102,7 @@ func buildTestJWT(claims map[string]interface{}) string {
 // buildTestJWTWithExpiry creates a JWT with iat and exp claims set relative to
 // the reference time.
 func buildTestJWTWithExpiry(iat time.Time, expiry time.Time) string {
-	claims := map[string]interface{}{
+	claims := map[string]any{
 		"iat": float64(iat.Unix()),
 		"exp": float64(expiry.Unix()),
 		"sub": "test-subject",
@@ -159,7 +159,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		typeNamespacedName types.NamespacedName
 		mockOID4VCI        *mockOID4VCIClient
 		mockStore          *mockCredentialStore
-		eventRecorder      *record.FakeRecorder
+		eventRecorder      *events.FakeRecorder
 		reconciler         *VerifiableCredentialRequestReconciler
 	)
 
@@ -170,7 +170,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		}
 		mockOID4VCI = &mockOID4VCIClient{}
 		mockStore = &mockCredentialStore{}
-		eventRecorder = record.NewFakeRecorder(fakeEventBufferSize)
+		eventRecorder = events.NewFakeRecorder(fakeEventBufferSize)
 		reconciler = &VerifiableCredentialRequestReconciler{
 			Client:          k8sClient,
 			Scheme:          k8sClient.Scheme(),
@@ -567,7 +567,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, _ oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
 				// Return a non-string credential (JSON-LD format).
 				return &oid4vci.CredentialResponse{
-					Credential: map[string]interface{}{"@context": "test"},
+					Credential: map[string]any{"@context": "test"},
 					Format:     "ldp_vc",
 				}, nil
 			}
@@ -653,7 +653,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				Scheme:          k8sClient.Scheme(),
 				OID4VCIClient:   mockOID4VCI,
 				CredentialStore: failStore,
-				EventRecorder:   record.NewFakeRecorder(fakeEventBufferSize),
+				EventRecorder:   events.NewFakeRecorder(fakeEventBufferSize),
 			}
 			_, _ = failReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -697,7 +697,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(mockStore.storeCalls).To(Equal(1))
 			Expect(mockStore.lastStored).NotTo(BeNil())
 			Expect(mockStore.lastStored.Format).To(Equal("jwt_vc_json"))
-			Expect(len(mockStore.lastStored.Credential)).To(BeNumerically(">", 0))
+			Expect(mockStore.lastStored.Credential).ToNot(BeEmpty())
 		})
 
 		It("should set correct TargetRef with owner information", func() {
@@ -862,7 +862,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			createVCRequest(ctx)
 
 			// Build a JWT without an exp claim.
-			jwtWithoutExp := buildTestJWT(map[string]interface{}{
+			jwtWithoutExp := buildTestJWT(map[string]any{
 				"iat": float64(time.Now().Unix()),
 				"sub": "test-subject",
 			})
@@ -1238,7 +1238,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 		It("should accumulate renewal count over multiple renewals", func() {
 			// Initial + 3 renewals.
-			for i := 0; i < 4; i++ {
+			for range 4 {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: typeNamespacedName,
 				})

@@ -12,7 +12,7 @@ metadata:
 rules:
   # Permission to create and patch Events for recording state transitions.
   - apiGroups:
-      - ""
+      - events.k8s.io
     resources:
       - events
     verbs:

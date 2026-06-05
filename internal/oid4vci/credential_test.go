@@ -71,9 +71,9 @@ func TestRequestCredential(t *testing.T) {
 				},
 			},
 			serverResponse: &CredentialResponse{
-				Credential: map[string]interface{}{
-					"@context": []interface{}{"https://www.w3.org/2018/credentials/v1"},
-					"type":     []interface{}{"VerifiableCredential", "EmployeeBadge"},
+				Credential: map[string]any{
+					"@context": []any{"https://www.w3.org/2018/credentials/v1"},
+					"type":     []any{"VerifiableCredential", "EmployeeBadge"},
 				},
 				Format: "ldp_vc",
 			},
@@ -183,7 +183,7 @@ func TestRequestCredential(t *testing.T) {
 func TestCredentialResponse_CredentialAsString(t *testing.T) {
 	tests := []struct {
 		name       string
-		credential interface{}
+		credential any
 		want       string
 	}{
 		{
@@ -193,7 +193,7 @@ func TestCredentialResponse_CredentialAsString(t *testing.T) {
 		},
 		{
 			name:       "non-string credential (JSON-LD)",
-			credential: map[string]interface{}{"type": "VerifiableCredential"},
+			credential: map[string]any{"type": "VerifiableCredential"},
 			want:       "",
 		},
 		{
@@ -254,7 +254,7 @@ func TestGenerateProofJWT(t *testing.T) {
 			}
 
 			// Parse and verify the JWT
-			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 				return &privateKey.PublicKey, nil
 			})
 			if err != nil {
@@ -272,7 +272,7 @@ func TestGenerateProofJWT(t *testing.T) {
 			if !ok {
 				t.Fatal("JWT should have jwk header")
 			}
-			jwkMap, ok := jwk.(map[string]interface{})
+			jwkMap, ok := jwk.(map[string]any)
 			if !ok {
 				t.Fatal("jwk header should be a map")
 			}
@@ -393,7 +393,7 @@ func TestGenerateAndVerifyProofJWT_RoundTrip(t *testing.T) {
 		if v != issuerURL {
 			t.Errorf("audience: got %s, want %s", v, issuerURL)
 		}
-	case []interface{}:
+	case []any:
 		if len(v) != 1 || v[0] != issuerURL {
 			t.Errorf("audience: got %v, want [%s]", v, issuerURL)
 		}
