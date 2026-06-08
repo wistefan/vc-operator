@@ -63,6 +63,13 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 	httpReq.Header.Set("Accept", ContentTypeJSON)
 	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
 
+	logger.V(1).Info("Sending credential request",
+		"method", http.MethodPost,
+		"url", credentialURL,
+		"headers", httpReq.Header,
+		"body", string(reqBody),
+	)
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		logger.Error(err, "Failed to execute credential request", "credentialURL", credentialURL)
@@ -84,6 +91,12 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 		logger.Error(err, "Failed to read credential response body", "credentialURL", credentialURL)
 		return nil, fmt.Errorf("%w: error reading response body: %v", ErrCredentialRequest, err)
 	}
+
+	logger.V(1).Info("Received credential response",
+		"statusCode", resp.StatusCode,
+		"contentLength", len(body),
+		"body", string(body),
+	)
 
 	var credResp CredentialResponse
 	if err := json.Unmarshal(body, &credResp); err != nil {

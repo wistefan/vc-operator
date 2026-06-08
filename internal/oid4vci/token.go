@@ -64,6 +64,13 @@ func (c *oid4vciClient) ObtainAccessToken(ctx context.Context, tokenURL string, 
 	req.Header.Set("Content-Type", ContentTypeFormURLEncoded)
 	req.Header.Set("Accept", ContentTypeJSON)
 
+	logger.V(1).Info("Sending token request",
+		"method", http.MethodPost,
+		"url", tokenURL,
+		"headers", req.Header,
+		"body", redactFormData(formData),
+	)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		logger.Error(err, "Failed to execute token request", "tokenURL", tokenURL)
@@ -83,6 +90,12 @@ func (c *oid4vciClient) ObtainAccessToken(ctx context.Context, tokenURL string, 
 		return nil, fmt.Errorf("%w: error reading response body: %v", ErrTokenAcquisition, err)
 	}
 
+	logger.V(1).Info("Received token response",
+		"statusCode", resp.StatusCode,
+		"contentLength", len(body),
+		"body", string(body),
+	)
+
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		logger.Error(err, "Failed to parse token response JSON", "tokenURL", tokenURL, "bodyLength", len(body))
@@ -96,6 +109,28 @@ func (c *oid4vciClient) ObtainAccessToken(ctx context.Context, tokenURL string, 
 	)
 
 	return &tokenResp, nil
+}
+
+// redactedValue is the placeholder used for sensitive form field values in debug logs.
+const redactedValue = "***REDACTED***"
+
+// sensitiveFormFields lists form field names whose values must be redacted in debug logs.
+var sensitiveFormFields = map[string]bool{
+	FormFieldClientSecret:       true,
+	FormFieldPreAuthorizedCode:  true,
+}
+
+// redactFormData returns a copy of the form values with sensitive fields redacted for safe logging.
+func redactFormData(form url.Values) string {
+	redacted := url.Values{}
+	for key, values := range form {
+		if sensitiveFormFields[key] {
+			redacted[key] = []string{redactedValue}
+		} else {
+			redacted[key] = values
+		}
+	}
+	return redacted.Encode()
 }
 
 // buildTokenFormData constructs the URL-encoded form data for a token request

@@ -34,6 +34,12 @@ func (c *oid4vciClient) DiscoverMetadata(ctx context.Context, issuerURL string) 
 	}
 	req.Header.Set("Accept", ContentTypeJSON)
 
+	logger.V(1).Info("Sending metadata discovery request",
+		"method", http.MethodGet,
+		"url", metadataURL,
+		"headers", req.Header,
+	)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		logger.Error(err, "Failed to fetch issuer metadata", "metadataURL", metadataURL)
@@ -52,6 +58,12 @@ func (c *oid4vciClient) DiscoverMetadata(ctx context.Context, issuerURL string) 
 		logger.Error(err, "Failed to read metadata response body", "metadataURL", metadataURL)
 		return nil, fmt.Errorf("%w: error reading response body: %v", ErrMetadataFetch, err)
 	}
+
+	logger.V(1).Info("Received metadata response",
+		"statusCode", resp.StatusCode,
+		"contentLength", len(body),
+		"body", string(body),
+	)
 
 	var metadata IssuerMetadata
 	if err := json.Unmarshal(body, &metadata); err != nil {
