@@ -19,6 +19,7 @@ package controller
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"fmt"
 	"time"
 
@@ -71,6 +72,18 @@ const (
 	// ActionCreateCredentialOffer is the event action recorded when the controller
 	// creates a credential offer via the OID4VCI credential offer endpoint.
 	ActionCreateCredentialOffer = "CreateCredentialOffer"
+
+	// ActionResolveHolderKey is the event action recorded when the controller
+	// resolves the holder key Secret for proof-of-possession generation.
+	ActionResolveHolderKey = "ResolveHolderKey"
+
+	// HolderKeySecretKeyPEM is the preferred data key in the holder key Secret
+	// for the PEM-encoded ECDSA private key.
+	HolderKeySecretKeyPEM = "key.pem"
+
+	// HolderKeySecretKeyTLS is the fallback data key in the holder key Secret,
+	// following the Kubernetes TLS Secret convention.
+	HolderKeySecretKeyTLS = "tls.key"
 )
 
 // VerifiableCredentialRequestReconciler reconciles VerifiableCredentialRequest
@@ -171,11 +184,20 @@ func (r *VerifiableCredentialRequestReconciler) Reconcile(ctx context.Context, r
 		tokenResp = resp
 	}
 
-	// Step 5: Request the specified credential from the credential endpoint.
+	// Step 5: Resolve holder key for proof-of-possession (if configured).
+	holderKey, err := r.resolveHolderKey(ctx, &vcReq)
+	if err != nil {
+		return r.handleHolderKeyError(ctx, &vcReq, err)
+	}
+
+	// Step 6: Request the specified credential from the credential endpoint.
 	// When the token response contains authorization_details with credential_identifiers,
 	// the OID4VCI spec requires using credential_identifier instead of
 	// credential_configuration_id + format.
-	credReq := r.buildCredentialRequest(tokenResp, vcReq.Spec.CredentialType, vcReq.Spec.Format)
+	credReq, err := r.buildCredentialRequest(ctx, tokenResp, issuer, &vcReq, holderKey)
+	if err != nil {
+		return r.handleHolderKeyError(ctx, &vcReq, err)
+	}
 	credResp, err := r.OID4VCIClient.RequestCredential(
 		ctx, issuer.Status.CredentialEndpoint, tokenResp.AccessToken, credReq,
 	)
@@ -655,11 +677,11 @@ func (r *VerifiableCredentialRequestReconciler) recordSuccessMetrics(
 }
 
 // obtainTokenViaCredentialOffer implements the pre-authorized code flow:
-// 1. Obtain an admin token via client_credentials grant.
-// 2. Create a pre-authorized credential offer for the requested credential type.
-// 3. Fetch the full offer to extract the pre-authorized code.
-// 4. Exchange the pre-authorized code for a credential-scoped access token
-//    that contains authorization_details required by the credential endpoint.
+//  1. Obtain an admin token via client_credentials grant.
+//  2. Create a pre-authorized credential offer for the requested credential type.
+//  3. Fetch the full offer to extract the pre-authorized code.
+//  4. Exchange the pre-authorized code for a credential-scoped access token
+//     that contains authorization_details required by the credential endpoint.
 //
 // Returns the full TokenResponse so the caller can extract credential_identifiers
 // from the authorization_details for the credential request.
@@ -717,21 +739,108 @@ func (r *VerifiableCredentialRequestReconciler) obtainTokenViaCredentialOffer(
 // When the token response contains authorization_details with credential_identifiers,
 // the request uses credential_identifier per OID4VCI spec section 7.2.
 // Otherwise, it falls back to credential_configuration_id + format.
+// If a holder key is provided, a proof-of-possession JWT is generated and included.
 func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
+	ctx context.Context,
 	tokenResp *oid4vci.TokenResponse,
-	credentialType string,
-	specFormat string,
-) oid4vci.CredentialRequest {
-	credIdentifier := tokenResp.CredentialIdentifierForConfig(credentialType)
+	issuer *vcv1alpha1.CredentialIssuer,
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+	holderKey *ecdsa.PrivateKey,
+) (oid4vci.CredentialRequest, error) {
+	var credReq oid4vci.CredentialRequest
+
+	credIdentifier := tokenResp.CredentialIdentifierForConfig(vcReq.Spec.CredentialType)
 	if credIdentifier != "" {
-		return oid4vci.CredentialRequest{
-			CredentialIdentifier: credIdentifier,
+		credReq.CredentialIdentifier = credIdentifier
+	} else {
+		credReq.CredentialConfigurationID = vcReq.Spec.CredentialType
+		credReq.Format = r.resolveFormat(vcReq.Spec.Format)
+	}
+
+	if holderKey != nil {
+		log := logf.FromContext(ctx)
+		proofJWT, err := oid4vci.GenerateProofJWT(holderKey, issuer.Spec.IssuerURL, tokenResp.CNonce, vcReq.Spec.HolderDID)
+		if err != nil {
+			log.Error(err, "Failed to generate proof-of-possession JWT")
+			return oid4vci.CredentialRequest{}, fmt.Errorf("failed to generate proof JWT: %w", err)
+		}
+		credReq.Proof = &oid4vci.CredentialProof{
+			ProofType: oid4vci.ProofTypeJWT,
+			JWT:       proofJWT,
 		}
 	}
-	return oid4vci.CredentialRequest{
-		CredentialConfigurationID: credentialType,
-		Format:                    r.resolveFormat(specFormat),
+
+	return credReq, nil
+}
+
+// resolveHolderKey reads and parses the holder's ECDSA private key from the
+// Secret referenced by spec.holderKeyRef. Returns nil if no holder key is
+// configured. Returns an error if holderDID is set without holderKeyRef, or
+// if the referenced Secret is missing/invalid.
+func (r *VerifiableCredentialRequestReconciler) resolveHolderKey(
+	ctx context.Context,
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+) (*ecdsa.PrivateKey, error) {
+	log := logf.FromContext(ctx)
+
+	if vcReq.Spec.HolderDID != "" && vcReq.Spec.HolderKeyRef == nil {
+		return nil, fmt.Errorf("holderDID requires holderKeyRef to be set")
 	}
+
+	if vcReq.Spec.HolderKeyRef == nil {
+		return nil, nil
+	}
+
+	secretKey := types.NamespacedName{
+		Name:      vcReq.Spec.HolderKeyRef.Name,
+		Namespace: vcReq.Namespace,
+	}
+
+	var secret corev1.Secret
+	if err := r.Get(ctx, secretKey, &secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("holder key Secret %q not found in namespace %q", secretKey.Name, secretKey.Namespace)
+		}
+		log.Error(err, "Failed to fetch holder key Secret", "secret", secretKey)
+		return nil, err
+	}
+
+	var pemData []byte
+	if data, ok := secret.Data[HolderKeySecretKeyPEM]; ok && len(data) > 0 {
+		pemData = data
+	} else if data, ok := secret.Data[HolderKeySecretKeyTLS]; ok && len(data) > 0 {
+		pemData = data
+	} else {
+		return nil, fmt.Errorf("holder key Secret %q missing required key (%s or %s)", secretKey.Name, HolderKeySecretKeyPEM, HolderKeySecretKeyTLS)
+	}
+
+	km, err := oid4vci.NewKeyManagerFromPEM(pemData)
+	if err != nil {
+		return nil, fmt.Errorf("holder key Secret %q contains invalid key data: %w", secretKey.Name, err)
+	}
+
+	log.V(1).Info("Resolved holder key from Secret", "secret", secretKey.Name)
+	return km.PrivateKey(), nil
+}
+
+// handleHolderKeyError handles errors related to the holder key Secret
+// (not found, missing key data, or invalid configuration).
+func (r *VerifiableCredentialRequestReconciler) handleHolderKeyError(
+	ctx context.Context,
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+	err error,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	msg := fmt.Sprintf("Holder key error: %v", err)
+	log.Info("Holder key configuration error", "error", err)
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonHolderKeyInvalid, ActionResolveHolderKey, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonHolderKeyInvalid)
+
+	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonHolderKeyInvalid, msg); statusErr != nil {
+		return ctrl.Result{}, statusErr
+	}
+	return ctrl.Result{RequeueAfter: ConfigErrorRequeueInterval}, nil
 }
 
 // handleCredentialOfferError handles failures from the credential offer flow.

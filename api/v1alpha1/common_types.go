@@ -86,6 +86,11 @@ const (
 	// ReasonStorageFailed indicates that storing the credential in the
 	// target backend failed.
 	ReasonStorageFailed = "StorageFailed"
+
+	// ReasonHolderKeyInvalid indicates that the referenced holder key
+	// Secret is missing, contains invalid key data, or holderDID is set
+	// without holderKeyRef.
+	ReasonHolderKeyInvalid = "HolderKeyInvalid"
 )
 
 // SecretReference is a reference to a Kubernetes Secret in the same namespace.

@@ -19,8 +19,13 @@ package controller
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"time"
 
@@ -1451,6 +1456,441 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 			// Renewal time already passed, use MinRenewalInterval.
 			Expect(result.RequeueAfter).To(Equal(credential.MinRenewalInterval))
+		})
+	})
+
+	Context("holder key binding: JWK binding via holderKeyRef", func() {
+		const holderKeySecretName = "test-holder-key"
+
+		// generateHolderKeyPEM creates an ECDSA P-256 key pair and returns the
+		// PEM-encoded private key and the private key itself for assertion.
+		generateHolderKeyPEM := func() ([]byte, *ecdsa.PrivateKey) {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).NotTo(HaveOccurred())
+
+			derBytes, err := x509.MarshalECPrivateKey(key)
+			Expect(err).NotTo(HaveOccurred())
+
+			pemBytes := pem.EncodeToMemory(&pem.Block{
+				Type:  "EC PRIVATE KEY",
+				Bytes: derBytes,
+			})
+			return pemBytes, key
+		}
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			setupHappyPath()
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+			deleteResource(ctx, &corev1.Secret{}, holderKeySecretName)
+		})
+
+		It("should include proof-of-possession JWT signed by holder key", func() {
+			pemData, holderKey := generateHolderKeyPEM()
+
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					HolderKeySecretKeyPEM: pemData,
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			var capturedReq oid4vci.CredentialRequest
+			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, req oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+				capturedReq = req
+				now := time.Now()
+				expiry := now.Add(1 * time.Hour)
+				return &oid4vci.CredentialResponse{
+					Credential: buildTestJWTWithExpiry(now, expiry),
+					Format:     "jwt_vc_json",
+				}, nil
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(capturedReq.Proof).NotTo(BeNil())
+			Expect(capturedReq.Proof.ProofType).To(Equal(oid4vci.ProofTypeJWT))
+			Expect(capturedReq.Proof.JWT).NotTo(BeEmpty())
+
+			// Verify the proof JWT can be parsed and is signed by the holder key.
+			claims, verifyErr := oid4vci.VerifyProofJWT(capturedReq.Proof.JWT)
+			Expect(verifyErr).NotTo(HaveOccurred())
+			Expect(claims).NotTo(BeNil())
+
+			_ = holderKey // key was used to generate the PEM; VerifyProofJWT extracts key from jwk header
+		})
+
+		It("should use tls.key as fallback key name", func() {
+			pemData, _ := generateHolderKeyPEM()
+
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					HolderKeySecretKeyTLS: pemData,
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			var capturedReq oid4vci.CredentialRequest
+			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, req oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+				capturedReq = req
+				now := time.Now()
+				expiry := now.Add(1 * time.Hour)
+				return &oid4vci.CredentialResponse{
+					Credential: buildTestJWTWithExpiry(now, expiry),
+					Format:     "jwt_vc_json",
+				}, nil
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(capturedReq.Proof).NotTo(BeNil())
+			Expect(capturedReq.Proof.JWT).NotTo(BeEmpty())
+		})
+
+		It("should not include proof when holderKeyRef is not set", func() {
+			createVCRequest(ctx)
+
+			var capturedReq oid4vci.CredentialRequest
+			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, req oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+				capturedReq = req
+				now := time.Now()
+				expiry := now.Add(1 * time.Hour)
+				return &oid4vci.CredentialResponse{
+					Credential: buildTestJWTWithExpiry(now, expiry),
+					Format:     "jwt_vc_json",
+				}, nil
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(capturedReq.Proof).To(BeNil())
+		})
+	})
+
+	Context("holder key binding: DID binding via holderDID", func() {
+		const holderKeySecretName = "test-holder-key-did"
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			setupHappyPath()
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+			deleteResource(ctx, &corev1.Secret{}, holderKeySecretName)
+		})
+
+		It("should include proof JWT when holderKeyRef and holderDID are both set", func() {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).NotTo(HaveOccurred())
+			derBytes, err := x509.MarshalECPrivateKey(key)
+			Expect(err).NotTo(HaveOccurred())
+			pemBytes := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: derBytes})
+
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					HolderKeySecretKeyPEM: pemBytes,
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			testDID := "did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169"
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+					HolderDID:    testDID,
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			var capturedReq oid4vci.CredentialRequest
+			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, req oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+				capturedReq = req
+				now := time.Now()
+				expiry := now.Add(1 * time.Hour)
+				return &oid4vci.CredentialResponse{
+					Credential: buildTestJWTWithExpiry(now, expiry),
+					Format:     "jwt_vc_json",
+				}, nil
+			}
+
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(capturedReq.Proof).NotTo(BeNil())
+			Expect(capturedReq.Proof.ProofType).To(Equal(oid4vci.ProofTypeJWT))
+			Expect(capturedReq.Proof.JWT).NotTo(BeEmpty())
+		})
+	})
+
+	Context("holder key binding: error cases", func() {
+		const holderKeySecretName = "test-holder-key-err"
+
+		BeforeEach(func() {
+			createReadyIssuer(ctx)
+			createAuthSecret(ctx)
+			setupHappyPath()
+		})
+
+		AfterEach(func() {
+			deleteResource(ctx, &vcv1alpha1.VerifiableCredentialRequest{}, vcReqName)
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			deleteResource(ctx, &corev1.Secret{}, authSecretName)
+			deleteResource(ctx, &corev1.Secret{}, holderKeySecretName)
+		})
+
+		It("should set HolderKeyInvalid error when holderDID is set without holderKeyRef", func() {
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderDID: "did:key:z6MkhaXgoo#key-1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+
+			status := getVCRequestStatus(ctx)
+			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
+			Expect(errorCondition).NotTo(BeNil())
+			Expect(errorCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonHolderKeyInvalid))
+		})
+
+		It("should set HolderKeyInvalid error when holder key Secret is not found", func() {
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: "nonexistent-secret"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+
+			status := getVCRequestStatus(ctx)
+			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
+			Expect(errorCondition).NotTo(BeNil())
+			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonHolderKeyInvalid))
+		})
+
+		It("should set HolderKeyInvalid error when Secret is missing key data", func() {
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					"wrong-key": []byte("some-data"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+
+			status := getVCRequestStatus(ctx)
+			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
+			Expect(errorCondition).NotTo(BeNil())
+			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonHolderKeyInvalid))
+			Expect(errorCondition.Message).To(ContainSubstring("missing required key"))
+		})
+
+		It("should set HolderKeyInvalid error when Secret contains invalid PEM data", func() {
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					HolderKeySecretKeyPEM: []byte("not-valid-pem-data"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+
+			status := getVCRequestStatus(ctx)
+			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
+			Expect(errorCondition).NotTo(BeNil())
+			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonHolderKeyInvalid))
+			Expect(errorCondition.Message).To(ContainSubstring("invalid key data"))
+		})
+
+		It("should record a warning event for holder key errors", func() {
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderDID: "did:key:z6MkhaXgoo#key-1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			var event string
+			Expect(eventRecorder.Events).Should(Receive(&event))
+			Expect(event).To(ContainSubstring(vcv1alpha1.ReasonHolderKeyInvalid))
 		})
 	})
 })

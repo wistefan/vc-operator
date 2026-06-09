@@ -75,6 +75,23 @@ type VerifiableCredentialRequestSpec struct {
 	// as-is in the credential request body.
 	// +optional
 	AdditionalClaims map[string]string `json:"additionalClaims,omitempty"`
+
+	// HolderKeyRef optionally references a Kubernetes Secret containing the
+	// holder's ECDSA P-256 private key in PEM format (expected data keys:
+	// "key.pem" or "tls.key"). When set, the operator uses this key to sign
+	// the proof-of-possession JWT in the credential request, causing the
+	// issuer to bind the credential to this key's identity.
+	// When omitted, no proof-of-possession is included in the request.
+	// +optional
+	HolderKeyRef *SecretReference `json:"holderKeyRef,omitempty"`
+
+	// HolderDID optionally specifies a DID URL to include as the "kid" header
+	// in the proof-of-possession JWT instead of embedding the full JWK.
+	// The DID must resolve to the public key corresponding to the private
+	// key referenced by HolderKeyRef.
+	// Requires HolderKeyRef to be set.
+	// +optional
+	HolderDID string `json:"holderDID,omitempty"`
 }
 
 // VerifiableCredentialRequestStatus defines the observed state of a

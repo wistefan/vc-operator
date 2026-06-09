@@ -114,22 +114,22 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 
 // GenerateProofJWT creates a proof-of-possession JWT for a credential request.
 // The JWT is signed with the provided ECDSA private key and includes:
-//   - Header: alg=ES256, typ=openid4vci-proof+jwt, jwk=<public key>
+//   - Header: alg=ES256, typ=openid4vci-proof+jwt, jwk=<public key> (or kid=<holderDID>)
 //   - Claims: aud=<issuerURL>, iat=<now>, nonce=<cNonce>
 //
 // The issuerURL should be the credential issuer identifier (from metadata).
 // The cNonce is the nonce value received from the token endpoint response.
-func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce string) (string, error) {
+// If holderDID is non-empty, the JWT uses a "kid" header with the DID URL
+// instead of embedding the full JWK, enabling DID-based holder binding.
+func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce string, holderDID string) (string, error) {
 	packageLogger.V(1).Info("Generating proof-of-possession JWT",
 		"audience", issuerURL,
 		"algorithm", ProofAlgorithmES256,
 		"curve", privateKey.Curve.Params().Name,
+		"holderDID", holderDID,
 	)
 
 	now := time.Now()
-
-	// Build JWK thumbprint for the public key
-	jwk := buildJWKFromPublicKey(&privateKey.PublicKey)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
 		ClaimAudience: issuerURL,
@@ -137,9 +137,13 @@ func GenerateProofJWT(privateKey *ecdsa.PrivateKey, issuerURL string, cNonce str
 		ClaimNonce:    cNonce,
 	})
 
-	// Set the JWT header fields
 	token.Header["typ"] = JWTProofHeaderType
-	token.Header["jwk"] = jwk
+
+	if holderDID != "" {
+		token.Header["kid"] = holderDID
+	} else {
+		token.Header["jwk"] = buildJWKFromPublicKey(&privateKey.PublicKey)
+	}
 
 	signedToken, err := token.SignedString(privateKey)
 	if err != nil {

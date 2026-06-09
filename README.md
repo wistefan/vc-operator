@@ -52,6 +52,9 @@ and automatically renews them before expiry.
   new one during rotation, giving consuming services a grace period.
 - **Prometheus Metrics** -- Built-in metrics for credentials issued, renewed,
   errors, and time-to-expiry.
+- **Holder Identity Binding** -- Optionally bind credentials to a specific holder
+  identity via proof-of-possession JWTs. Supports both JWK-based and DID-based
+  binding.
 - **Keycloak Support** -- First-class support for Keycloak as an OID4VCI issuer.
 
 ## Quick Start
@@ -143,6 +146,60 @@ kubectl get verifiablecredentialrequests
 kubectl get secret my-service-vc -o jsonpath='{.data.credential}' | base64 -d
 ```
 
+### Holder Identity Binding (Optional)
+
+By default, credentials are issued without being bound to a specific holder. To
+bind a credential to a holder identity, provide a holder key and optionally a DID.
+
+**1. Generate an ECDSA P-256 key pair:**
+
+```bash
+openssl ecparam -genkey -name prime256v1 -noout -out holder-key.pem
+```
+
+**2. Create a Secret with the holder key:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-holder-key
+type: Opaque
+data:
+  key.pem: <base64-encoded contents of holder-key.pem>
+```
+
+**3. Reference the key in the VerifiableCredentialRequest:**
+
+```yaml
+apiVersion: vc.vc-operator.io/v1alpha1
+kind: VerifiableCredentialRequest
+metadata:
+  name: my-service-credential
+spec:
+  issuerRef:
+    name: my-keycloak-issuer
+  credentialType: "VerifiableCredential"
+  format: jwt_vc_json
+  targetSecretRef:
+    name: my-service-vc
+    key: credential
+  # Bind to the holder's key (JWK binding)
+  holderKeyRef:
+    name: my-holder-key
+  # Optional: use a DID instead of raw JWK in the proof
+  # holderDID: "did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169"
+```
+
+When `holderKeyRef` is set, the operator signs a proof-of-possession JWT with the
+holder's private key and includes it in the credential request. The issuer then
+binds the issued credential to that key.
+
+If `holderDID` is also set, the proof JWT uses a `kid` header with the DID URL
+instead of embedding the full JWK public key. This enables DID-based holder
+binding. The DID must resolve to the public key corresponding to the private key
+in the referenced Secret.
+
 ## CRD Reference
 
 ### CredentialIssuer
@@ -181,6 +238,8 @@ automatically.
 | `spec.targetSecretRef.key` | `string` | No | `credential` | Key within the Secret data map for the credential value. |
 | `spec.renewBefore` | `duration` | No | `5m` | How long before credential expiry to attempt renewal (e.g., `5m`, `1h`). |
 | `spec.additionalClaims` | `map[string]string` | No | -- | Extra claims to include in the credential request (issuer-specific). |
+| `spec.holderKeyRef.name` | `string` | No | -- | Name of a Secret containing the holder's ECDSA P-256 private key in PEM format (data key `key.pem` or `tls.key`). When set, the operator signs a proof-of-possession JWT with this key, binding the credential to the holder. |
+| `spec.holderDID` | `string` | No | -- | DID URL to use as the `kid` header in the proof JWT instead of embedding the full JWK. Requires `holderKeyRef` to be set. |
 
 **Status fields:**
 
@@ -291,6 +350,7 @@ kubectl describe verifiablecredentialrequest <name>
 | `TokenRequestFailed` | Failed to obtain an access token from the issuer. | Verify client credentials are correct. Check issuer logs. |
 | `CredentialRequestFailed` | The credential issuance request was rejected. | Verify the `credentialType` is supported by the issuer. Check the issuer's `credential_configurations_supported`. |
 | `StorageFailed` | Failed to create or update the target Secret. | Check RBAC permissions. Ensure no conflicting Secret exists with different ownership. |
+| `HolderKeyInvalid` | The `holderKeyRef` Secret is missing, contains invalid key data, or `holderDID` is set without `holderKeyRef`. | Verify the holder key Secret exists and contains a valid ECDSA P-256 private key under the `key.pem` or `tls.key` data key. If using `holderDID`, ensure `holderKeyRef` is also set. |
 
 ### Credential not renewing
 
@@ -323,6 +383,8 @@ step-by-step instructions.
 Additional examples:
 - [Basic sample](config/samples/vc_v1alpha1_credentialissuer.yaml) -- Minimal
   `CredentialIssuer` and `VerifiableCredentialRequest`.
+- [Holder binding](config/samples/vc_v1alpha1_verifiablecredentialrequest_holder_binding.yaml)
+  -- Request with holder identity binding via key and DID.
 - [Custom renewal interval](config/samples/keycloak-example/vcrequest-custom-renewal.yaml)
   -- Request with a 1-hour renewal buffer.
 - [Additional claims](config/samples/keycloak-example/vcrequest-additional-claims.yaml)

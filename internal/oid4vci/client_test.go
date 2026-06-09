@@ -160,7 +160,7 @@ func TestFullOID4VCIFlow(t *testing.T) {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}
 
-	proofJWT, err := GenerateProofJWT(km.PrivateKey(), discoveredMetadata.CredentialIssuer, tokenResp.CNonce)
+	proofJWT, err := GenerateProofJWT(km.PrivateKey(), discoveredMetadata.CredentialIssuer, tokenResp.CNonce, "")
 	if err != nil {
 		t.Fatalf("GenerateProofJWT failed: %v", err)
 	}

@@ -224,27 +224,50 @@ func TestGenerateProofJWT(t *testing.T) {
 		name      string
 		issuerURL string
 		cNonce    string
+		holderDID string
+		wantKid   bool
+		wantJWK   bool
 	}{
 		{
-			name:      "standard proof JWT",
+			name:      "standard proof JWT with JWK binding",
 			issuerURL: "https://issuer.example.com",
 			cNonce:    "nonce-123",
+			holderDID: "",
+			wantJWK:   true,
 		},
 		{
 			name:      "proof JWT with empty nonce",
 			issuerURL: "https://issuer.example.com",
 			cNonce:    "",
+			holderDID: "",
+			wantJWK:   true,
 		},
 		{
 			name:      "proof JWT with complex issuer URL",
 			issuerURL: "https://auth.complex-domain.example.com/realms/test",
 			cNonce:    "complex-nonce-456-xyz",
+			holderDID: "",
+			wantJWK:   true,
+		},
+		{
+			name:      "proof JWT with DID binding",
+			issuerURL: "https://issuer.example.com",
+			cNonce:    "nonce-456",
+			holderDID: "did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169",
+			wantKid:   true,
+		},
+		{
+			name:      "proof JWT with DID key fragment",
+			issuerURL: "https://issuer.example.com",
+			cNonce:    "nonce-789",
+			holderDID: "did:key:z6MkhaXgoo#key-1",
+			wantKid:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokenString, err := GenerateProofJWT(privateKey, tt.issuerURL, tt.cNonce)
+			tokenString, err := GenerateProofJWT(privateKey, tt.issuerURL, tt.cNonce, tt.holderDID)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -261,26 +284,45 @@ func TestGenerateProofJWT(t *testing.T) {
 				t.Fatalf("failed to parse generated JWT: %v", err)
 			}
 
-			// Verify header
+			// Verify common header fields
 			if token.Header["typ"] != JWTProofHeaderType {
 				t.Errorf("JWT typ header: got %v, want %s", token.Header["typ"], JWTProofHeaderType)
 			}
 			if token.Header["alg"] != ProofAlgorithmES256 {
 				t.Errorf("JWT alg header: got %v, want %s", token.Header["alg"], ProofAlgorithmES256)
 			}
-			jwk, ok := token.Header["jwk"]
-			if !ok {
-				t.Fatal("JWT should have jwk header")
+
+			// Verify JWK vs kid header based on holderDID
+			if tt.wantJWK {
+				jwk, ok := token.Header["jwk"]
+				if !ok {
+					t.Fatal("JWT should have jwk header")
+				}
+				jwkMap, ok := jwk.(map[string]any)
+				if !ok {
+					t.Fatal("jwk header should be a map")
+				}
+				if jwkMap["kty"] != "EC" {
+					t.Errorf("JWK kty: got %v, want EC", jwkMap["kty"])
+				}
+				if jwkMap["crv"] != "P-256" {
+					t.Errorf("JWK crv: got %v, want P-256", jwkMap["crv"])
+				}
+				if _, hasKid := token.Header["kid"]; hasKid {
+					t.Error("JWT with JWK binding should not have kid header")
+				}
 			}
-			jwkMap, ok := jwk.(map[string]any)
-			if !ok {
-				t.Fatal("jwk header should be a map")
-			}
-			if jwkMap["kty"] != "EC" {
-				t.Errorf("JWK kty: got %v, want EC", jwkMap["kty"])
-			}
-			if jwkMap["crv"] != "P-256" {
-				t.Errorf("JWK crv: got %v, want P-256", jwkMap["crv"])
+			if tt.wantKid {
+				kid, ok := token.Header["kid"]
+				if !ok {
+					t.Fatal("JWT should have kid header")
+				}
+				if kid != tt.holderDID {
+					t.Errorf("kid header: got %v, want %s", kid, tt.holderDID)
+				}
+				if _, hasJWK := token.Header["jwk"]; hasJWK {
+					t.Error("JWT with DID binding should not have jwk header")
+				}
 			}
 
 			// Verify claims
@@ -319,8 +361,8 @@ func TestVerifyProofJWT(t *testing.T) {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
-	// Generate a valid proof JWT
-	tokenString, err := GenerateProofJWT(privateKey, "https://issuer.example.com", "test-nonce")
+	// Generate a valid proof JWT (no DID binding)
+	tokenString, err := GenerateProofJWT(privateKey, "https://issuer.example.com", "test-nonce", "")
 	if err != nil {
 		t.Fatalf("failed to generate proof JWT: %v", err)
 	}
@@ -372,7 +414,7 @@ func TestGenerateAndVerifyProofJWT_RoundTrip(t *testing.T) {
 	issuerURL := "https://issuer.example.com"
 	cNonce := "round-trip-nonce"
 
-	tokenString, err := GenerateProofJWT(km.PrivateKey(), issuerURL, cNonce)
+	tokenString, err := GenerateProofJWT(km.PrivateKey(), issuerURL, cNonce, "")
 	if err != nil {
 		t.Fatalf("failed to generate proof JWT: %v", err)
 	}

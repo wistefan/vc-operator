@@ -180,8 +180,9 @@ credential acquisition.
 - The grant type is determined by the contents of the auth Secret:
   - If `client_id` and `client_secret` are present: use client credentials grant.
   - If `pre_authorized_code` is present: use pre-authorized code grant.
-- The OID4VCI client uses proof-of-possession JWTs signed with an ephemeral
-  ECDSA P-256 key pair to bind the credential to the operator.
+- The OID4VCI client supports proof-of-possession JWTs signed with a
+  holder-provided ECDSA P-256 key pair to bind the credential to a specific
+  holder identity. When no holder key is configured, no proof is included.
 
 ---
 
@@ -274,6 +275,48 @@ signature verification.
 - If signature verification is needed in the future, it can be added as an
   optional validation step without changing the parsing logic.
 
+### ADR-7: Holder Identity Binding via Proof-of-Possession
+
+**Status:** Accepted
+
+**Context:** Verifiable Credentials can be bound to a specific holder identity so
+that only the holder can present the credential. Without holder binding, any party
+with access to the credential can present it. The OID4VCI specification supports
+holder binding through proof-of-possession JWTs included in the credential
+request.
+
+**Decision:** Support optional per-request holder binding via a `holderKeyRef`
+field on `VerifiableCredentialRequest`. When set, the operator reads the holder's
+ECDSA P-256 private key from the referenced Secret and signs a proof-of-possession
+JWT with it. An optional `holderDID` field allows DID-based binding (using `kid`
+header) instead of raw JWK binding.
+
+**Rationale:**
+- **Per-request, not per-issuer:** Holder binding is on the
+  `VerifiableCredentialRequest` because different services may need credentials
+  bound to different identities from the same issuer.
+- **Key in Secret, not DID resolution:** The operator needs the private key to
+  sign the proof JWT. Requiring the key in a Kubernetes Secret is consistent with
+  how auth credentials are already managed. The operator does not need a DID
+  resolver -- it trusts the user to provide a DID that matches the key.
+- **ECDSA P-256 only:** The OID4VCI specification requires ES256 for proof JWTs.
+  Supporting additional algorithms is future work.
+- **Fully optional and backward-compatible:** Both fields default to nil/empty.
+  Omitting them preserves the existing behavior (no proof, no holder binding).
+- **Two binding modes:** JWK binding (embed public key in proof header) for
+  simple cases, and DID binding (reference a DID URL via `kid` header) for
+  deployments using Decentralized Identifiers.
+
+**Trade-offs:**
+- The holder's private key must be stored in a Kubernetes Secret, which requires
+  appropriate RBAC and Secret management practices.
+- The operator does not verify that the DID resolves to the correct public key.
+  A mismatch will cause the issuer to reject the request at runtime.
+- Only ECDSA P-256 keys are supported. Ed25519 (common in `did:key`) and RSA
+  keys are not yet supported.
+
+---
+
 ## Data Flow
 
 ### Credential Issuance Flow
@@ -296,7 +339,9 @@ signature verification.
    |-- Reads client credentials from auth Secret
    |-- Calls OID4VCI Client:
    |   |-- POST token endpoint (client_credentials grant)
-   |   |-- POST credential endpoint (with proof-of-possession JWT)
+   |   |-- Resolves holder key from holderKeyRef Secret (if configured)
+   |   |-- Generates proof-of-possession JWT with holder key (if configured)
+   |   |-- POST credential endpoint (with optional proof-of-possession)
    |   |-- Returns CredentialResponse
    |-- Parses JWT to extract expiry
    |-- Stores credential via CredentialStore interface
@@ -322,6 +367,11 @@ Permanent errors (401, 403, invalid config):
   --> Set Error condition with descriptive message
   --> Requeue at ConfigErrorRequeueInterval (1 minute)
   --> No exponential backoff (config needs manual fix)
+
+Holder key errors (missing Secret, invalid PEM, DID without key):
+  --> Set Error condition with HolderKeyInvalid reason
+  --> Requeue at ConfigErrorRequeueInterval (1 minute)
+  --> Requires user to fix the holder key Secret
 
 Issuer not ready:
   --> Requeue at IssuerNotReadyRequeueInterval (30 seconds)

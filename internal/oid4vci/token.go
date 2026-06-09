@@ -116,8 +116,8 @@ const redactedValue = "***REDACTED***"
 
 // sensitiveFormFields lists form field names whose values must be redacted in debug logs.
 var sensitiveFormFields = map[string]bool{
-	FormFieldClientSecret:       true,
-	FormFieldPreAuthorizedCode:  true,
+	FormFieldClientSecret:      true,
+	FormFieldPreAuthorizedCode: true,
 }
 
 // redactFormData returns a copy of the form values with sensitive fields redacted for safe logging.
