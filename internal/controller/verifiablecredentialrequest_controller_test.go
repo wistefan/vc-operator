@@ -281,15 +281,58 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		return vcReq.Status
 	}
 
+	// setupCredentialOfferMocks configures the credential offer mock functions
+	// needed for the client_credentials → pre-authorized code flow.
+	setupCredentialOfferMocks := func() {
+		mockOID4VCI.createCredentialOfferFunc = func(_ context.Context, _, _, _ string) (*oid4vci.CredentialOfferURI, error) {
+			return &oid4vci.CredentialOfferURI{
+				Issuer: "https://issuer.example.com/protocol/oid4vc/credential-offer",
+				Nonce:  "test-nonce-123",
+			}, nil
+		}
+		mockOID4VCI.fetchCredentialOfferFunc = func(_ context.Context, _, _ string) (*oid4vci.CredentialOffer, error) {
+			return &oid4vci.CredentialOffer{
+				CredentialIssuer:           "https://issuer.example.com",
+				CredentialConfigurationIDs: []string{credType},
+				Grants: map[string]oid4vci.PreAuthorizedGrant{
+					string(oid4vci.GrantTypePreAuthorizedCode): {
+						Code: "test-pre-auth-code",
+					},
+				},
+			}, nil
+		}
+	}
+
+	// preAuthTokenResponse returns a TokenResponse with authorization_details
+	// matching what Keycloak's pre-authorized code grant produces.
+	preAuthTokenResponse := func(expiresIn int) *oid4vci.TokenResponse {
+		return &oid4vci.TokenResponse{
+			AccessToken: "test-access-token",
+			TokenType:   "Bearer",
+			ExpiresIn:   expiresIn,
+			AuthorizationDetails: []oid4vci.AuthorizationDetail{
+				{
+					Type:                      "openid_credential",
+					CredentialConfigurationID: credType,
+					CredentialIdentifiers:     []string{credType + "_0000"},
+				},
+			},
+		}
+	}
+
 	// setupHappyPath configures mocks for a successful credential issuance flow.
 	setupHappyPath := func() {
 		now := time.Now()
 		expiry := now.Add(1 * time.Hour)
 		testJWT := buildTestJWTWithExpiry(now, expiry)
 
-		mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+		setupCredentialOfferMocks()
+		mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, auth oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+			if auth.GrantType == oid4vci.GrantTypePreAuthorizedCode {
+				return preAuthTokenResponse(3600), nil
+			}
 			return &oid4vci.TokenResponse{
-				AccessToken: "test-access-token",
+				AccessToken: "test-admin-token",
 				TokenType:   "Bearer",
 				ExpiresIn:   3600,
 			}, nil
@@ -308,9 +351,13 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		expiry := refTime.Add(credDuration)
 		testJWT := buildTestJWTWithExpiry(refTime, expiry)
 
-		mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+		setupCredentialOfferMocks()
+		mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, auth oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
+			if auth.GrantType == oid4vci.GrantTypePreAuthorizedCode {
+				return preAuthTokenResponse(int(credDuration.Seconds())), nil
+			}
 			return &oid4vci.TokenResponse{
-				AccessToken: "test-access-token",
+				AccessToken: "test-admin-token",
 				TokenType:   "Bearer",
 				ExpiresIn:   int(credDuration.Seconds()),
 			}, nil
@@ -453,7 +500,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			deleteResource(ctx, &corev1.Secret{}, authSecretName)
 		})
 
-		It("should set Error condition with TokenRequestFailed reason and return error for backoff", func() {
+		It("should set Error condition with CredentialRequestFailed reason and return error for backoff", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -464,7 +511,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
 			Expect(errorCondition).NotTo(BeNil())
 			Expect(errorCondition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonTokenRequestFailed))
+			Expect(errorCondition.Reason).To(Equal(vcv1alpha1.ReasonCredentialRequestFailed))
 		})
 
 		It("should record a warning event for the token failure", func() {
@@ -474,7 +521,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 			var event string
 			Expect(eventRecorder.Events).Should(Receive(&event))
-			Expect(event).To(ContainSubstring(vcv1alpha1.ReasonTokenRequestFailed))
+			Expect(event).To(ContainSubstring(vcv1alpha1.ReasonCredentialRequestFailed))
 		})
 	})
 
@@ -483,6 +530,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			createReadyIssuer(ctx)
 			createAuthSecret(ctx)
 			createVCRequest(ctx)
+			setupCredentialOfferMocks()
 			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
 				return &oid4vci.TokenResponse{
 					AccessToken: "test-access-token",
@@ -524,6 +572,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			expiry := now.Add(1 * time.Hour)
 			testJWT := buildTestJWTWithExpiry(now, expiry)
 
+			setupCredentialOfferMocks()
 			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
 				return &oid4vci.TokenResponse{AccessToken: "token", TokenType: "Bearer"}, nil
 			}
@@ -561,6 +610,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			createAuthSecret(ctx)
 			createVCRequest(ctx)
 
+			setupCredentialOfferMocks()
 			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
 				return &oid4vci.TokenResponse{AccessToken: "token", TokenType: "Bearer"}, nil
 			}
@@ -867,6 +917,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				"sub": "test-subject",
 			})
 
+			setupCredentialOfferMocks()
 			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, _ oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
 				return &oid4vci.TokenResponse{AccessToken: "token", TokenType: "Bearer"}, nil
 			}
@@ -958,11 +1009,14 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			deleteResource(ctx, &corev1.Secret{}, authSecretName)
 		})
 
-		It("should use client credentials grant type", func() {
-			var capturedAuth oid4vci.TokenAuth
+		It("should use client credentials for admin token, then pre-authorized code for credential token", func() {
+			var capturedAuths []oid4vci.TokenAuth
 			mockOID4VCI.obtainAccessTokenFunc = func(_ context.Context, _ string, auth oid4vci.TokenAuth) (*oid4vci.TokenResponse, error) {
-				capturedAuth = auth
-				return &oid4vci.TokenResponse{AccessToken: "token", TokenType: "Bearer"}, nil
+				capturedAuths = append(capturedAuths, auth)
+				if auth.GrantType == oid4vci.GrantTypePreAuthorizedCode {
+					return preAuthTokenResponse(3600), nil
+				}
+				return &oid4vci.TokenResponse{AccessToken: "admin-token", TokenType: "Bearer"}, nil
 			}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -970,9 +1024,12 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(capturedAuth.GrantType).To(Equal(oid4vci.GrantTypeClientCredentials))
-			Expect(capturedAuth.ClientID).To(Equal("test-client-id"))
-			Expect(capturedAuth.ClientSecret).To(Equal("test-client-secret"))
+			Expect(capturedAuths).To(HaveLen(2))
+			Expect(capturedAuths[0].GrantType).To(Equal(oid4vci.GrantTypeClientCredentials))
+			Expect(capturedAuths[0].ClientID).To(Equal("test-client-id"))
+			Expect(capturedAuths[0].ClientSecret).To(Equal("test-client-secret"))
+			Expect(capturedAuths[1].GrantType).To(Equal(oid4vci.GrantTypePreAuthorizedCode))
+			Expect(capturedAuths[1].PreAuthorizedCode).To(Equal("test-pre-auth-code"))
 		})
 	})
 
@@ -990,7 +1047,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			deleteResource(ctx, &corev1.Secret{}, authSecretName)
 		})
 
-		It("should pass the correct credential type and format to the OID4VCI client", func() {
+		It("should use credential_identifier from authorization_details when available", func() {
 			var capturedReq oid4vci.CredentialRequest
 			var capturedURL string
 			var capturedToken string
@@ -1013,8 +1070,9 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(capturedReq.CredentialConfigurationID).To(Equal(credType))
-			Expect(capturedReq.Format).To(Equal("jwt_vc_json"))
+			Expect(capturedReq.CredentialIdentifier).To(Equal(credType + "_0000"))
+			Expect(capturedReq.CredentialConfigurationID).To(BeEmpty())
+			Expect(capturedReq.Format).To(BeEmpty())
 			Expect(capturedURL).To(Equal("https://issuer.example.com/credentials"))
 			Expect(capturedToken).To(Equal("test-access-token"))
 		})
@@ -1301,7 +1359,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 
-			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonTokenRequestFailed)
+			errors := getCounterValue(testMetrics.CredentialsErrorsTotal, vcReqNs, vcReqName, vcv1alpha1.ReasonCredentialRequestFailed)
 			Expect(errors).To(Equal(float64(1)))
 		})
 

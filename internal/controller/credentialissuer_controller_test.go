@@ -41,9 +41,11 @@ const fakeEventBufferSize = 20
 // mockOID4VCIClient is a configurable mock implementation of oid4vci.Client
 // for testing the CredentialIssuer controller without real HTTP calls.
 type mockOID4VCIClient struct {
-	discoverMetadataFunc  func(ctx context.Context, issuerURL string) (*oid4vci.IssuerMetadata, error)
-	obtainAccessTokenFunc func(ctx context.Context, tokenURL string, auth oid4vci.TokenAuth) (*oid4vci.TokenResponse, error)
-	requestCredentialFunc func(ctx context.Context, credentialURL string, accessToken string, request oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error)
+	discoverMetadataFunc      func(ctx context.Context, issuerURL string) (*oid4vci.IssuerMetadata, error)
+	obtainAccessTokenFunc     func(ctx context.Context, tokenURL string, auth oid4vci.TokenAuth) (*oid4vci.TokenResponse, error)
+	requestCredentialFunc     func(ctx context.Context, credentialURL string, accessToken string, request oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error)
+	createCredentialOfferFunc func(ctx context.Context, issuerURL, accessToken, credentialConfigID string) (*oid4vci.CredentialOfferURI, error)
+	fetchCredentialOfferFunc  func(ctx context.Context, issuerURL, nonce string) (*oid4vci.CredentialOffer, error)
 }
 
 // DiscoverMetadata delegates to the configured mock function or returns an error.
@@ -68,6 +70,22 @@ func (m *mockOID4VCIClient) RequestCredential(ctx context.Context, credentialURL
 		return m.requestCredentialFunc(ctx, credentialURL, accessToken, request)
 	}
 	return nil, fmt.Errorf("RequestCredential not configured")
+}
+
+// CreateCredentialOffer delegates to the configured mock function or returns an error.
+func (m *mockOID4VCIClient) CreateCredentialOffer(ctx context.Context, issuerURL, accessToken, credentialConfigID string) (*oid4vci.CredentialOfferURI, error) {
+	if m.createCredentialOfferFunc != nil {
+		return m.createCredentialOfferFunc(ctx, issuerURL, accessToken, credentialConfigID)
+	}
+	return nil, fmt.Errorf("CreateCredentialOffer not configured")
+}
+
+// FetchCredentialOffer delegates to the configured mock function or returns an error.
+func (m *mockOID4VCIClient) FetchCredentialOffer(ctx context.Context, issuerURL, nonce string) (*oid4vci.CredentialOffer, error) {
+	if m.fetchCredentialOfferFunc != nil {
+		return m.fetchCredentialOfferFunc(ctx, issuerURL, nonce)
+	}
+	return nil, fmt.Errorf("FetchCredentialOffer not configured")
 }
 
 // defaultMetadata returns a well-formed IssuerMetadata for use in tests.

@@ -23,6 +23,16 @@ type Client interface {
 	// RequestCredential sends a credential issuance request to the given credential endpoint,
 	// authenticated with the provided access token, and returns the issued credential.
 	RequestCredential(ctx context.Context, credentialURL string, accessToken string, request CredentialRequest) (*CredentialResponse, error)
+
+	// CreateCredentialOffer requests a pre-authorized credential offer from the issuer.
+	// The issuerURL is the base issuer URL (e.g., http://keycloak:8080/realms/my-realm).
+	// The accessToken must be a valid bearer token with permission to create offers.
+	CreateCredentialOffer(ctx context.Context, issuerURL, accessToken, credentialConfigID string) (*CredentialOfferURI, error)
+
+	// FetchCredentialOffer retrieves the full credential offer using the nonce
+	// obtained from CreateCredentialOffer. The issuerURL is used to construct
+	// the internal offer retrieval URL.
+	FetchCredentialOffer(ctx context.Context, issuerURL, nonce string) (*CredentialOffer, error)
 }
 
 // ClientOption is a functional option for configuring an oid4vciClient.

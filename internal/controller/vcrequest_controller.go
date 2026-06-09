@@ -67,6 +67,10 @@ const (
 	// ActionStoreCredential is the event action recorded when the controller
 	// stores a credential via the CredentialStore backend.
 	ActionStoreCredential = "StoreCredential"
+
+	// ActionCreateCredentialOffer is the event action recorded when the controller
+	// creates a credential offer via the OID4VCI credential offer endpoint.
+	ActionCreateCredentialOffer = "CreateCredentialOffer"
 )
 
 // VerifiableCredentialRequestReconciler reconciles VerifiableCredentialRequest
@@ -147,17 +151,31 @@ func (r *VerifiableCredentialRequestReconciler) Reconcile(ctx context.Context, r
 		return r.handleAuthError(ctx, &vcReq, err)
 	}
 
-	// Step 4: Obtain an OAuth 2.0 access token from the token endpoint.
-	tokenResp, err := r.OID4VCIClient.ObtainAccessToken(ctx, issuer.Status.TokenEndpoint, *tokenAuth)
-	if err != nil {
-		return r.handleTokenError(ctx, &vcReq, err)
+	// Step 4: Obtain a credential-scoped access token.
+	// For client_credentials auth, Keycloak's OID4VCI credential endpoint requires
+	// authorization_details in the access token (RFC 9396), which the client_credentials
+	// grant does not produce. Work around this by creating a pre-authorized credential
+	// offer and exchanging the resulting code for a properly scoped token.
+	var tokenResp *oid4vci.TokenResponse
+	if tokenAuth.GrantType == oid4vci.GrantTypeClientCredentials {
+		resp, err := r.obtainTokenViaCredentialOffer(ctx, issuer, tokenAuth, vcReq.Spec.CredentialType)
+		if err != nil {
+			return r.handleCredentialOfferError(ctx, &vcReq, err)
+		}
+		tokenResp = resp
+	} else {
+		resp, err := r.OID4VCIClient.ObtainAccessToken(ctx, issuer.Status.TokenEndpoint, *tokenAuth)
+		if err != nil {
+			return r.handleTokenError(ctx, &vcReq, err)
+		}
+		tokenResp = resp
 	}
 
 	// Step 5: Request the specified credential from the credential endpoint.
-	credReq := oid4vci.CredentialRequest{
-		CredentialConfigurationID: vcReq.Spec.CredentialType,
-		Format:                    r.resolveFormat(vcReq.Spec.Format),
-	}
+	// When the token response contains authorization_details with credential_identifiers,
+	// the OID4VCI spec requires using credential_identifier instead of
+	// credential_configuration_id + format.
+	credReq := r.buildCredentialRequest(tokenResp, vcReq.Spec.CredentialType, vcReq.Spec.Format)
 	credResp, err := r.OID4VCIClient.RequestCredential(
 		ctx, issuer.Status.CredentialEndpoint, tokenResp.AccessToken, credReq,
 	)
@@ -634,6 +652,106 @@ func (r *VerifiableCredentialRequestReconciler) recordSuccessMetrics(
 			float64(parsed.Expiry.Unix()),
 		)
 	}
+}
+
+// obtainTokenViaCredentialOffer implements the pre-authorized code flow:
+// 1. Obtain an admin token via client_credentials grant.
+// 2. Create a pre-authorized credential offer for the requested credential type.
+// 3. Fetch the full offer to extract the pre-authorized code.
+// 4. Exchange the pre-authorized code for a credential-scoped access token
+//    that contains authorization_details required by the credential endpoint.
+//
+// Returns the full TokenResponse so the caller can extract credential_identifiers
+// from the authorization_details for the credential request.
+func (r *VerifiableCredentialRequestReconciler) obtainTokenViaCredentialOffer(
+	ctx context.Context,
+	issuer *vcv1alpha1.CredentialIssuer,
+	tokenAuth *oid4vci.TokenAuth,
+	credentialType string,
+) (*oid4vci.TokenResponse, error) {
+	log := logf.FromContext(ctx)
+
+	// Step 1: Get admin token via client_credentials.
+	adminToken, err := r.OID4VCIClient.ObtainAccessToken(ctx, issuer.Status.TokenEndpoint, *tokenAuth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain admin token: %w", err)
+	}
+
+	// Step 2: Create a pre-authorized credential offer.
+	log.V(1).Info("Creating credential offer", "credentialType", credentialType)
+	offerURI, err := r.OID4VCIClient.CreateCredentialOffer(
+		ctx, issuer.Spec.IssuerURL, adminToken.AccessToken, credentialType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create credential offer: %w", err)
+	}
+
+	// Step 3: Fetch the full credential offer to get the pre-authorized code.
+	offer, err := r.OID4VCIClient.FetchCredentialOffer(ctx, issuer.Spec.IssuerURL, offerURI.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch credential offer: %w", err)
+	}
+
+	preAuthCode, err := offer.PreAuthorizedCode()
+	if err != nil {
+		return nil, fmt.Errorf("credential offer missing pre-authorized code: %w", err)
+	}
+
+	// Step 4: Exchange pre-authorized code for a credential-scoped token.
+	log.V(1).Info("Exchanging pre-authorized code for credential token")
+	preAuthToken, err := r.OID4VCIClient.ObtainAccessToken(ctx, issuer.Status.TokenEndpoint, oid4vci.TokenAuth{
+		GrantType:         oid4vci.GrantTypePreAuthorizedCode,
+		PreAuthorizedCode: preAuthCode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange pre-authorized code for token: %w", err)
+	}
+
+	log.Info("Successfully obtained credential-scoped token via pre-authorized code flow",
+		"credentialType", credentialType)
+
+	return preAuthToken, nil
+}
+
+// buildCredentialRequest constructs the credential request based on the token response.
+// When the token response contains authorization_details with credential_identifiers,
+// the request uses credential_identifier per OID4VCI spec section 7.2.
+// Otherwise, it falls back to credential_configuration_id + format.
+func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
+	tokenResp *oid4vci.TokenResponse,
+	credentialType string,
+	specFormat string,
+) oid4vci.CredentialRequest {
+	credIdentifier := tokenResp.CredentialIdentifierForConfig(credentialType)
+	if credIdentifier != "" {
+		return oid4vci.CredentialRequest{
+			CredentialIdentifier: credIdentifier,
+		}
+	}
+	return oid4vci.CredentialRequest{
+		CredentialConfigurationID: credentialType,
+		Format:                    r.resolveFormat(specFormat),
+	}
+}
+
+// handleCredentialOfferError handles failures from the credential offer flow.
+// Returns the error for exponential backoff.
+func (r *VerifiableCredentialRequestReconciler) handleCredentialOfferError(
+	ctx context.Context,
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+	err error,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	msg := fmt.Sprintf("Failed to obtain credential token via pre-authorized code flow: %v", err)
+	log.Error(err, "Credential offer flow failed")
+	r.EventRecorder.Eventf(vcReq, nil, corev1.EventTypeWarning, vcv1alpha1.ReasonCredentialRequestFailed, ActionCreateCredentialOffer, msg)
+	r.recordErrorMetric(vcReq, vcv1alpha1.ReasonCredentialRequestFailed)
+
+	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonCredentialRequestFailed, msg); statusErr != nil {
+		return ctrl.Result{}, statusErr
+	}
+	return ctrl.Result{}, err
 }
 
 // SetupWithManager sets up the VerifiableCredentialRequest controller with the

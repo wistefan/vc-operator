@@ -3,7 +3,10 @@
 // grants, and credential issuance requests including proof-of-possession JWT generation.
 package oid4vci
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Well-known discovery and protocol constants.
 const (
@@ -149,14 +152,50 @@ type TokenResponse struct {
 
 	// Scope is the scope of the access token, if different from requested.
 	Scope string `json:"scope,omitempty"`
+
+	// AuthorizationDetails contains the RFC 9396 authorization details from the token response.
+	// When present with credential_identifiers, the credential request must use
+	// credential_identifier instead of credential_configuration_id + format.
+	AuthorizationDetails []AuthorizationDetail `json:"authorization_details,omitempty"`
+}
+
+// AuthorizationDetail represents a single entry in the RFC 9396 authorization_details
+// array returned in a token response from an OID4VCI issuer.
+type AuthorizationDetail struct {
+	// Type is the authorization detail type (e.g., "openid_credential").
+	Type string `json:"type"`
+
+	// CredentialConfigurationID identifies the credential configuration this detail applies to.
+	CredentialConfigurationID string `json:"credential_configuration_id,omitempty"`
+
+	// CredentialIdentifiers lists the specific credential identifiers that must be used
+	// in credential requests instead of credential_configuration_id + format.
+	CredentialIdentifiers []string `json:"credential_identifiers,omitempty"`
+}
+
+// CredentialIdentifierForConfig returns the first credential_identifier from authorization_details
+// matching the given credential configuration ID. Returns empty string if no match is found.
+func (r *TokenResponse) CredentialIdentifierForConfig(credentialConfigID string) string {
+	for _, ad := range r.AuthorizationDetails {
+		if ad.CredentialConfigurationID == credentialConfigID && len(ad.CredentialIdentifiers) > 0 {
+			return ad.CredentialIdentifiers[0]
+		}
+	}
+	return ""
 }
 
 // CredentialRequest represents a request to the credential issuance endpoint.
 // It specifies which credential to issue and provides proof of key possession.
+// When CredentialIdentifier is set, it takes precedence over CredentialConfigurationID
+// and Format per OID4VCI spec section 7.2.
 type CredentialRequest struct {
 	// CredentialConfigurationID identifies the requested credential configuration
-	// as advertised in the issuer's metadata.
-	CredentialConfigurationID string `json:"credential_configuration_id"`
+	// as advertised in the issuer's metadata. Omitted when CredentialIdentifier is used.
+	CredentialConfigurationID string `json:"credential_configuration_id,omitempty"`
+
+	// CredentialIdentifier is a specific credential identifier from the authorization_details
+	// in the token response. When present, CredentialConfigurationID and Format are omitted.
+	CredentialIdentifier string `json:"credential_identifier,omitempty"`
 
 	// Format specifies the desired credential format (e.g., "jwt_vc_json").
 	Format string `json:"format,omitempty"`
@@ -182,11 +221,17 @@ type CredentialProof struct {
 
 // CredentialResponse contains the parsed response from the credential endpoint,
 // including the issued credential and optional updated nonce.
+// Supports both the singular "credential" field (OID4VCI draft ≤13) and the
+// plural "credentials" array (OID4VCI draft 14+/Keycloak 26.x).
 type CredentialResponse struct {
-	// Credential is the issued verifiable credential.
+	// Credential is the issued verifiable credential (singular format).
 	// Its type depends on the format: a string for JWT-based formats,
 	// or a JSON object for JSON-LD formats.
-	Credential any `json:"credential"`
+	Credential any `json:"credential,omitempty"`
+
+	// Credentials is the issued credentials array (plural format, OID4VCI draft 14+).
+	// Each entry wraps a credential value.
+	Credentials []CredentialEntry `json:"credentials,omitempty"`
 
 	// Format is the format of the issued credential.
 	Format string `json:"format,omitempty"`
@@ -198,15 +243,87 @@ type CredentialResponse struct {
 	CNonceExpiresIn int `json:"c_nonce_expires_in,omitempty"`
 }
 
+// CredentialEntry represents a single entry in the "credentials" array
+// returned by the credential endpoint in OID4VCI draft 14+ responses.
+type CredentialEntry struct {
+	// Credential is the issued verifiable credential value.
+	Credential any `json:"credential"`
+}
+
 // CredentialAsString returns the credential as a string.
-// This is useful for JWT-based credential formats where the credential
-// is a compact-serialized JWT string. Returns empty string if the
-// credential is not a string type.
+// It checks the singular "credential" field first, then falls back to the
+// first entry in the "credentials" array. Returns empty string if neither
+// contains a string credential.
 func (r *CredentialResponse) CredentialAsString() string {
 	if s, ok := r.Credential.(string); ok {
 		return s
 	}
+	if len(r.Credentials) > 0 {
+		if s, ok := r.Credentials[0].Credential.(string); ok {
+			return s
+		}
+	}
 	return ""
+}
+
+// OID4VCI protocol path constants for credential offer endpoints.
+const (
+	// CredentialOfferCreatePath is the path appended to an issuer URL
+	// for creating a credential offer.
+	CredentialOfferCreatePath = "/protocol/oid4vc/create-credential-offer"
+
+	// CredentialOfferBasePath is the path prefix appended to an issuer URL
+	// for retrieving a credential offer by nonce.
+	CredentialOfferBasePath = "/protocol/oid4vc/credential-offer"
+)
+
+// CredentialOfferURI is the response from the create-credential-offer endpoint.
+// It contains the offer endpoint and a nonce used to retrieve the full offer.
+type CredentialOfferURI struct {
+	// Issuer is the credential offer endpoint URL.
+	Issuer string `json:"issuer"`
+
+	// Nonce is the lookup key for retrieving the full credential offer.
+	Nonce string `json:"nonce"`
+}
+
+// CredentialOffer is the full credential offer retrieved via the offer nonce.
+// It contains the issuer identity, available credential configurations, and
+// grant details including the pre-authorized code.
+type CredentialOffer struct {
+	// CredentialIssuer is the identifier of the credential issuer.
+	CredentialIssuer string `json:"credential_issuer"`
+
+	// CredentialConfigurationIDs lists the credential configurations available in this offer.
+	CredentialConfigurationIDs []string `json:"credential_configuration_ids"`
+
+	// Grants maps grant type URIs to their parameters.
+	Grants map[string]PreAuthorizedGrant `json:"grants"`
+}
+
+// PreAuthorizedCode extracts the pre-authorized code from the credential offer's grants.
+// Returns an error if the offer does not contain a pre-authorized code grant.
+func (o *CredentialOffer) PreAuthorizedCode() (string, error) {
+	grant, ok := o.Grants[string(GrantTypePreAuthorizedCode)]
+	if !ok {
+		return "", fmt.Errorf("credential offer does not contain a pre-authorized code grant")
+	}
+	if grant.Code == "" {
+		return "", fmt.Errorf("credential offer pre-authorized code grant has an empty code")
+	}
+	return grant.Code, nil
+}
+
+// PreAuthorizedGrant contains the pre-authorized code from a credential offer.
+type PreAuthorizedGrant struct {
+	// Code is the pre-authorized code to exchange for an access token.
+	Code string `json:"pre-authorized_code"`
+
+	// TxCode is an optional transaction code required alongside the pre-authorized code.
+	TxCode string `json:"tx_code,omitempty"`
+
+	// AuthorizationServer is the optional authorization server URL, if different from the issuer.
+	AuthorizationServer string `json:"authorization_server,omitempty"`
 }
 
 // OIDCError represents an error response from an OID4VCI or OAuth 2.0 endpoint.

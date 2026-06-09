@@ -27,6 +27,9 @@ var (
 
 	// ErrUnsupportedGrantType indicates an unsupported OAuth grant type was specified.
 	ErrUnsupportedGrantType = errors.New("unsupported grant type")
+
+	// ErrCredentialOffer indicates a failure to create or fetch a credential offer.
+	ErrCredentialOffer = errors.New("failed to create or fetch credential offer")
 )
 
 // HTTPError represents an HTTP-level error from an OID4VCI endpoint,
