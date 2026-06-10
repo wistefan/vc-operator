@@ -31,3 +31,14 @@ jobs:
     secrets:
       QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+
+  helm-chart:
+    needs:
+      - lint
+      - unit-test
+      - e2e-test
+      - security-analysis
+    uses: ./.github/workflows/helm-chart.yml
+    secrets:
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
