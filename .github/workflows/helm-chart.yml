@@ -16,7 +16,7 @@ on:
         required: true
 
 env:
-  OCI_REPO: oci://quay.io/fiware/helm-charts
+  OCI_REPO: oci://quay.io/seamware/helm-charts
   CHART_DIR: charts/vc-operator
   CHART_TAG_PREFIX: chart-v
 
