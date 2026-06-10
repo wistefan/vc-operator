@@ -1591,6 +1591,98 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(claims).NotTo(BeNil())
 		})
 
+		It("should use proofs (plural) format for keycloak issuer type", func() {
+			// Delete the generic issuer created by BeforeEach and create a keycloak one.
+			deleteResource(ctx, &vcv1alpha1.CredentialIssuer{}, issuerName)
+			keycloakIssuer := &vcv1alpha1.CredentialIssuer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      issuerName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.CredentialIssuerSpec{
+					IssuerURL:     "https://issuer.example.com",
+					IssuerType:    "keycloak",
+					AuthSecretRef: vcv1alpha1.SecretReference{Name: authSecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, keycloakIssuer)).To(Succeed())
+			Eventually(func() error {
+				var fetched vcv1alpha1.CredentialIssuer
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: issuerName, Namespace: vcReqNs}, &fetched); err != nil {
+					return err
+				}
+				fetched.Status.CredentialEndpoint = "https://issuer.example.com/credentials"
+				fetched.Status.TokenEndpoint = "https://issuer.example.com/token"
+				fetched.Status.IssuerIdentifier = "https://issuer.example.com"
+				fetched.Status.SupportedCredentialTypes = []string{"VerifiableCredential"}
+				meta.SetStatusCondition(&fetched.Status.Conditions, metav1.Condition{
+					Type:               vcv1alpha1.ConditionTypeReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             vcv1alpha1.ReasonMetadataDiscovered,
+					Message:            "Issuer is ready",
+					ObservedGeneration: fetched.Generation,
+				})
+				return k8sClient.Status().Update(ctx, &fetched)
+			}).Should(Succeed())
+
+			pemData := generateHolderKeyPEM()
+			holderSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      holderKeySecretName,
+					Namespace: vcReqNs,
+				},
+				Data: map[string][]byte{
+					HolderKeySecretKeyPEM: pemData,
+				},
+			}
+			Expect(k8sClient.Create(ctx, holderSecret)).To(Succeed())
+
+			vcReq := &vcv1alpha1.VerifiableCredentialRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vcReqName,
+					Namespace: vcReqNs,
+				},
+				Spec: vcv1alpha1.VerifiableCredentialRequestSpec{
+					IssuerRef:      vcv1alpha1.LocalObjectReference{Name: issuerName},
+					CredentialType: credType,
+					Format:         "jwt_vc_json",
+					TargetSecretRef: vcv1alpha1.TargetSecretReference{
+						Name: targetSecret,
+						Key:  "credential",
+					},
+					HolderKeyRef: &vcv1alpha1.SecretReference{Name: holderKeySecretName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, vcReq)).To(Succeed())
+
+			var capturedReq oid4vci.CredentialRequest
+			mockOID4VCI.requestCredentialFunc = func(_ context.Context, _ string, _ string, req oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error) {
+				capturedReq = req
+				now := time.Now()
+				expiry := now.Add(1 * time.Hour)
+				return &oid4vci.CredentialResponse{
+					Credential: buildTestJWTWithExpiry(now, expiry),
+					Format:     "jwt_vc_json",
+				}, nil
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(capturedReq.Proof).To(BeNil(), "proof (singular) should not be set for keycloak issuers")
+			Expect(capturedReq.Proofs).NotTo(BeNil(), "proofs (plural) must be set for keycloak issuers")
+			Expect(capturedReq.Proofs[oid4vci.ProofTypeJWT]).To(HaveLen(1))
+			Expect(capturedReq.Proofs[oid4vci.ProofTypeJWT][0]).NotTo(BeEmpty())
+
+			// Verify the proof JWT can be parsed.
+			proofJWT := capturedReq.Proofs[oid4vci.ProofTypeJWT][0]
+			claims, verifyErr := oid4vci.VerifyProofJWT(proofJWT)
+			Expect(verifyErr).NotTo(HaveOccurred())
+			Expect(claims).NotTo(BeNil())
+		})
+
 		It("should use tls.key as fallback key name", func() {
 			pemData := generateHolderKeyPEM()
 

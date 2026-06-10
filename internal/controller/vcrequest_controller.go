@@ -776,8 +776,8 @@ func (r *VerifiableCredentialRequestReconciler) obtainTokenViaCredentialOffer(
 // the request uses credential_identifier per OID4VCI spec section 7.2.
 // Otherwise, it falls back to credential_configuration_id + format.
 // If a holder key is provided, a proof-of-possession JWT is generated and included.
-// Keycloak issuers use the OID4VCI draft 14+ "proofs" (plural) format; other
-// issuers use the draft <=13 "proof" (singular) format.
+// Keycloak issuers require the OID4VCI draft 14+ "proofs" (plural) format for key
+// binding to take effect; generic issuers use the draft <=13 "proof" (singular) format.
 func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
 	ctx context.Context,
 	tokenResp *oid4vci.TokenResponse,
@@ -815,9 +815,15 @@ func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
 			log.Error(err, "Failed to generate proof-of-possession JWT")
 			return oid4vci.CredentialRequest{}, fmt.Errorf("failed to generate proof JWT: %w", err)
 		}
-		credReq.Proof = &oid4vci.CredentialProof{
-			ProofType: oid4vci.ProofTypeJWT,
-			JWT:       proofJWT,
+		if issuer.Spec.IssuerType == "keycloak" {
+			credReq.Proofs = map[string][]string{
+				oid4vci.ProofTypeJWT: {proofJWT},
+			}
+		} else {
+			credReq.Proof = &oid4vci.CredentialProof{
+				ProofType: oid4vci.ProofTypeJWT,
+				JWT:       proofJWT,
+			}
 		}
 	}
 
