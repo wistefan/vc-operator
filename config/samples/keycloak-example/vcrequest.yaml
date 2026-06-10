@@ -1,0 +1,39 @@
+# Basic VerifiableCredentialRequest that obtains a credential from the
+# Keycloak issuer and stores it in a Kubernetes Secret.
+#
+# The operator will:
+#   1. Look up the referenced CredentialIssuer ("keycloak-issuer")
+#   2. Obtain an access token using the issuer's auth credentials
+#   3. Request a credential of type "VerifiableCredential" in jwt_vc_json format
+#   4. Store the credential in a Secret named "my-service-vc"
+#   5. Automatically renew the credential 5 minutes before expiry
+apiVersion: vc.vc-operator.io/v1alpha1
+kind: VerifiableCredentialRequest
+metadata:
+  name: my-vc-request
+  labels:
+    app.kubernetes.io/name: vc-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Reference to the CredentialIssuer (must be in the same namespace).
+  issuerRef:
+    name: keycloak-issuer
+
+  # The credential type to request. Must match one of the types in the
+  # issuer's credential_configurations_supported metadata.
+  credentialType: "VerifiableCredential"
+
+  # Credential format. Default is "jwt_vc_json".
+  # Supported: "jwt_vc_json", "ldp_vc", "jwt_vc", "vc+sd-jwt".
+  format: jwt_vc_json
+
+  # Storage backend. Currently only "kubernetes" (Secrets) is supported.
+  storageType: kubernetes
+
+  # Where to store the obtained credential.
+  targetSecretRef:
+    name: my-service-vc
+    key: credential
+
+  # Renew 5 minutes before the credential expires (default).
+  renewBefore: 5m

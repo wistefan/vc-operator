@@ -1,0 +1,56 @@
+vc-operator has been installed successfully!
+
+{{- if .Values.crds.install }}
+
+CRDs installed:
+  - credentialissuers.vc.vc-operator.io
+  - verifiablecredentialrequests.vc.vc-operator.io
+{{- end }}
+
+To get started, create a CredentialIssuer and a VerifiableCredentialRequest:
+
+  1. Create an auth Secret with your issuer credentials:
+
+     kubectl create secret generic my-issuer-auth \
+       --from-literal=client_id=my-client \
+       --from-literal=client_secret=my-secret \
+       -n {{ .Release.Namespace }}
+
+  2. Create a CredentialIssuer:
+
+     cat <<EOF | kubectl apply -f -
+     apiVersion: vc.vc-operator.io/v1alpha1
+     kind: CredentialIssuer
+     metadata:
+       name: my-issuer
+       namespace: {{ .Release.Namespace }}
+     spec:
+       issuerURL: https://keycloak.example.com/realms/my-realm
+       issuerType: keycloak
+       authSecretRef:
+         name: my-issuer-auth
+     EOF
+
+  3. Create a VerifiableCredentialRequest:
+
+     cat <<EOF | kubectl apply -f -
+     apiVersion: vc.vc-operator.io/v1alpha1
+     kind: VerifiableCredentialRequest
+     metadata:
+       name: my-credential
+       namespace: {{ .Release.Namespace }}
+     spec:
+       issuerRef:
+         name: my-issuer
+       credentialType: VerifiableCredential
+       format: jwt_vc_json
+       targetSecretRef:
+         name: my-credential-secret
+     EOF
+
+  4. Check the status:
+
+     kubectl get credentialissuers -n {{ .Release.Namespace }}
+     kubectl get verifiablecredentialrequests -n {{ .Release.Namespace }}
+
+For more information, visit: https://github.com/wistefan/vc-operator

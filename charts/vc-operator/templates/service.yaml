@@ -1,0 +1,18 @@
+{{- if and .Values.metrics.service.enabled (ne .Values.metrics.bindAddress "0") -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vc-operator.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vc-operator.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.metrics.service.type }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.service.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "vc-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

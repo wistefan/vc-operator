@@ -1,0 +1,22 @@
+apiVersion: v2
+name: vc-operator
+description: >-
+  A Kubernetes operator that manages Verifiable Credentials (VCs) for services
+  in FIWARE-ecosystem deployments. It obtains credentials via OID4VCI
+  (OpenID for Verifiable Credential Issuance), stores them as Kubernetes
+  Secrets, and automatically renews them before expiry.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">= 1.26.0"
+keywords:
+  - verifiable-credentials
+  - oid4vci
+  - fiware
+  - kubernetes-operator
+  - credential-management
+home: https://github.com/wistefan/vc-operator
+sources:
+  - https://github.com/wistefan/vc-operator
+maintainers:
+  - name: wistefan

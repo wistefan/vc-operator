@@ -1,0 +1,39 @@
+# VerifiableCredentialRequest with additional issuer-specific claims.
+#
+# The additionalClaims field allows passing extra key-value pairs in the
+# credential request. These are issuer-specific and may be used to:
+#   - Request specific scopes or roles to be embedded in the credential
+#   - Pass domain-specific attributes required by the issuer
+#   - Configure credential content (e.g., subject identifiers)
+#
+# Consult your issuer's documentation for supported additional claims.
+apiVersion: vc.vc-operator.io/v1alpha1
+kind: VerifiableCredentialRequest
+metadata:
+  name: vc-request-with-claims
+  labels:
+    app.kubernetes.io/name: vc-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  issuerRef:
+    name: keycloak-issuer
+
+  credentialType: "VerifiableCredential"
+  format: jwt_vc_json
+  storageType: kubernetes
+
+  targetSecretRef:
+    name: my-service-vc-with-claims
+    key: credential
+
+  renewBefore: 10m
+
+  # Additional claims passed to the credential issuance request.
+  # These are specific to the issuer implementation.
+  additionalClaims:
+    # Example: request specific roles to be included in the VC
+    roles: "service-consumer,data-reader"
+    # Example: specify the subject identifier
+    subjectDID: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+    # Example: request a specific credential scope
+    scope: "openid VerifiableCredential"
