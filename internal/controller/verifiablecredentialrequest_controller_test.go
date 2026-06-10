@@ -1506,7 +1506,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 		// generateHolderKeyPEM creates an ECDSA P-256 key pair and returns the
 		// PEM-encoded private key and the private key itself for assertion.
-		generateHolderKeyPEM := func() ([]byte, *ecdsa.PrivateKey) {
+		generateHolderKeyPEM := func() []byte {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1517,7 +1517,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				Type:  "EC PRIVATE KEY",
 				Bytes: derBytes,
 			})
-			return pemBytes, key
+			return pemBytes
 		}
 
 		BeforeEach(func() {
@@ -1534,7 +1534,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		})
 
 		It("should include proof-of-possession JWT signed by holder key", func() {
-			pemData, holderKey := generateHolderKeyPEM()
+			pemData := generateHolderKeyPEM()
 
 			holderSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1589,12 +1589,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			claims, verifyErr := oid4vci.VerifyProofJWT(capturedReq.Proof.JWT)
 			Expect(verifyErr).NotTo(HaveOccurred())
 			Expect(claims).NotTo(BeNil())
-
-			_ = holderKey // key was used to generate the PEM; VerifyProofJWT extracts key from jwk header
 		})
 
 		It("should use tls.key as fallback key name", func() {
-			pemData, _ := generateHolderKeyPEM()
+			pemData := generateHolderKeyPEM()
 
 			holderSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1741,7 +1739,6 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(capturedReq.Proof.JWT).NotTo(BeEmpty())
 		})
 	})
-
 
 	Context("holder key binding: error cases", func() {
 		const holderKeySecretName = "test-holder-key-err"

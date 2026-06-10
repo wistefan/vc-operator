@@ -136,7 +136,7 @@ func (r *VerifiableCredentialRequestReconciler) skipIfNotDueForRenewal(
 	}
 
 	now := r.now()
-	timeUntilRenewal := vcReq.Status.NextRenewalTime.Time.Sub(now)
+	timeUntilRenewal := vcReq.Status.NextRenewalTime.Sub(now)
 	if timeUntilRenewal <= 0 {
 		return ctrl.Result{}, false
 	}
