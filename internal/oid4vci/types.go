@@ -64,6 +64,11 @@ type IssuerMetadata struct {
 	// if different from the credential issuer.
 	AuthorizationServer string `json:"authorization_server,omitempty"`
 
+	// NonceEndpoint is the URL of the nonce endpoint (OID4VCI draft 15+/Keycloak 26.x).
+	// When present, clients must obtain a nonce from this endpoint for proof JWTs
+	// instead of relying on c_nonce from the token response.
+	NonceEndpoint string `json:"nonce_endpoint,omitempty"`
+
 	// CredentialConfigurationsSupported maps credential configuration IDs
 	// to their supported configuration details.
 	CredentialConfigurationsSupported map[string]CredentialConfiguration `json:"credential_configurations_supported"`
@@ -188,6 +193,10 @@ func (r *TokenResponse) CredentialIdentifierForConfig(credentialConfigID string)
 // It specifies which credential to issue and provides proof of key possession.
 // When CredentialIdentifier is set, it takes precedence over CredentialConfigurationID
 // and Format per OID4VCI spec section 7.2.
+//
+// Supports both the draft 13 "proof" (singular) format and the draft 14+ "proofs"
+// (plural) format. Set Proofs for issuers implementing draft 14+ (e.g., Keycloak 26.x)
+// and Proof for legacy issuers.
 type CredentialRequest struct {
 	// CredentialConfigurationID identifies the requested credential configuration
 	// as advertised in the issuer's metadata. Omitted when CredentialIdentifier is used.
@@ -200,16 +209,20 @@ type CredentialRequest struct {
 	// Format specifies the desired credential format (e.g., "jwt_vc_json").
 	Format string `json:"format,omitempty"`
 
-	// Proof contains the proof of possession of cryptographic key material,
-	// typically a JWT signed by the holder's key.
+	// Proof contains the proof of possession of cryptographic key material
+	// in the draft <=13 singular format.
 	Proof *CredentialProof `json:"proof,omitempty"`
+
+	// Proofs contains proof(s) of possession in the draft 14+ plural format.
+	// Keyed by proof type (e.g., "jwt"), with values as arrays of proof strings.
+	Proofs map[string][]string `json:"proofs,omitempty"`
 
 	// CredentialDefinition optionally specifies additional credential type information.
 	CredentialDefinition *CredentialDefinition `json:"credential_definition,omitempty"`
 }
 
-// CredentialProof contains a proof of possession for a credential request.
-// Currently only JWT proof type is supported.
+// CredentialProof contains a proof of possession for a credential request
+// in the OID4VCI draft <=13 singular format.
 type CredentialProof struct {
 	// ProofType is the type of proof (e.g., "jwt").
 	ProofType string `json:"proof_type"`

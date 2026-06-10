@@ -112,6 +112,66 @@ func (c *oid4vciClient) RequestCredential(ctx context.Context, credentialURL str
 	return &credResp, nil
 }
 
+// nonceResponse is the JSON body returned by the OID4VCI nonce endpoint.
+type nonceResponse struct {
+	CNonce          string `json:"c_nonce"`
+	CNonceExpiresIn int    `json:"c_nonce_expires_in,omitempty"`
+}
+
+// FetchNonce obtains a fresh c_nonce from the issuer's nonce endpoint.
+// The nonce endpoint is advertised in the issuer metadata (OID4VCI draft 15+/Keycloak 26.x)
+// and returns a nonce that must be included in proof-of-possession JWTs.
+func (c *oid4vciClient) FetchNonce(ctx context.Context, nonceEndpoint, accessToken string) (string, error) {
+	logger := log.FromContext(ctx).WithName("oid4vci")
+
+	logger.V(1).Info("Fetching nonce from nonce endpoint", "nonceEndpoint", nonceEndpoint)
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, nonceEndpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create nonce request: %w", err)
+	}
+	httpReq.Header.Set("Accept", ContentTypeJSON)
+	if accessToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch nonce: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		httpErr := parseHTTPError(resp)
+		logger.Error(httpErr, "Nonce endpoint returned non-OK status",
+			"nonceEndpoint", nonceEndpoint,
+			"statusCode", resp.StatusCode,
+		)
+		return "", fmt.Errorf("nonce endpoint error: %w", httpErr)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCredentialResponseBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read nonce response: %w", err)
+	}
+
+	var nonceResp nonceResponse
+	if err := json.Unmarshal(body, &nonceResp); err != nil {
+		return "", fmt.Errorf("failed to parse nonce response: %w", err)
+	}
+
+	if nonceResp.CNonce == "" {
+		return "", fmt.Errorf("nonce endpoint returned empty c_nonce")
+	}
+
+	logger.V(1).Info("Successfully fetched nonce",
+		"nonceEndpoint", nonceEndpoint,
+		"expiresIn", nonceResp.CNonceExpiresIn,
+	)
+
+	return nonceResp.CNonce, nil
+}
+
 // GenerateProofJWT creates a proof-of-possession JWT for a credential request.
 // The JWT is signed with the provided ECDSA private key and includes:
 //   - Header: alg=ES256, typ=openid4vci-proof+jwt, jwk=<public key> (or kid=<holderDID>)

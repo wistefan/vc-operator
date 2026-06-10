@@ -46,6 +46,7 @@ type mockOID4VCIClient struct {
 	requestCredentialFunc     func(ctx context.Context, credentialURL string, accessToken string, request oid4vci.CredentialRequest) (*oid4vci.CredentialResponse, error)
 	createCredentialOfferFunc func(ctx context.Context, issuerURL, accessToken, credentialConfigID string) (*oid4vci.CredentialOfferURI, error)
 	fetchCredentialOfferFunc  func(ctx context.Context, issuerURL, nonce string) (*oid4vci.CredentialOffer, error)
+	fetchNonceFunc            func(ctx context.Context, nonceEndpoint, accessToken string) (string, error)
 }
 
 // DiscoverMetadata delegates to the configured mock function or returns an error.
@@ -86,6 +87,14 @@ func (m *mockOID4VCIClient) FetchCredentialOffer(ctx context.Context, issuerURL,
 		return m.fetchCredentialOfferFunc(ctx, issuerURL, nonce)
 	}
 	return nil, fmt.Errorf("FetchCredentialOffer not configured")
+}
+
+// FetchNonce delegates to the configured mock function or returns an error.
+func (m *mockOID4VCIClient) FetchNonce(ctx context.Context, nonceEndpoint, accessToken string) (string, error) {
+	if m.fetchNonceFunc != nil {
+		return m.fetchNonceFunc(ctx, nonceEndpoint, accessToken)
+	}
+	return "", fmt.Errorf("FetchNonce not configured")
 }
 
 // defaultMetadata returns a well-formed IssuerMetadata for use in tests.

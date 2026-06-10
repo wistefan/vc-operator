@@ -116,6 +116,34 @@ func (r *VerifiableCredentialRequestReconciler) now() time.Time {
 	return time.Now()
 }
 
+// skipIfNotDueForRenewal checks whether the credential is already obtained,
+// valid, and not yet due for renewal. Returns (result, true) to skip the
+// full reconciliation when no work is needed, or (_, false) to proceed.
+func (r *VerifiableCredentialRequestReconciler) skipIfNotDueForRenewal(
+	vcReq *vcv1alpha1.VerifiableCredentialRequest,
+) (ctrl.Result, bool) {
+	readyCondition := meta.FindStatusCondition(vcReq.Status.Conditions, vcv1alpha1.ConditionTypeReady)
+	if readyCondition == nil || readyCondition.Status != metav1.ConditionTrue {
+		return ctrl.Result{}, false
+	}
+
+	if readyCondition.ObservedGeneration != vcReq.Generation {
+		return ctrl.Result{}, false
+	}
+
+	if vcReq.Status.NextRenewalTime == nil {
+		return ctrl.Result{}, false
+	}
+
+	now := r.now()
+	timeUntilRenewal := vcReq.Status.NextRenewalTime.Time.Sub(now)
+	if timeUntilRenewal <= 0 {
+		return ctrl.Result{}, false
+	}
+
+	return ctrl.Result{RequeueAfter: timeUntilRenewal}, true
+}
+
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=verifiablecredentialrequests,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=verifiablecredentialrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=verifiablecredentialrequests/finalizers,verbs=update
@@ -150,6 +178,14 @@ func (r *VerifiableCredentialRequestReconciler) Reconcile(ctx context.Context, r
 		}
 		log.Error(err, "Failed to fetch VerifiableCredentialRequest")
 		return ctrl.Result{}, err
+	}
+
+	// Step 1b: Skip reconciliation if the credential is already valid and
+	// not yet due for renewal. Status updates from handleSuccess trigger the
+	// informer, which re-invokes Reconcile; without this guard, every
+	// successful issuance immediately causes another full credential request.
+	if result, skip := r.skipIfNotDueForRenewal(&vcReq); skip {
+		return result, nil
 	}
 
 	// Step 2: Look up the referenced CredentialIssuer and verify it is Ready.
@@ -740,6 +776,8 @@ func (r *VerifiableCredentialRequestReconciler) obtainTokenViaCredentialOffer(
 // the request uses credential_identifier per OID4VCI spec section 7.2.
 // Otherwise, it falls back to credential_configuration_id + format.
 // If a holder key is provided, a proof-of-possession JWT is generated and included.
+// Keycloak issuers use the OID4VCI draft 14+ "proofs" (plural) format; other
+// issuers use the draft <=13 "proof" (singular) format.
 func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
 	ctx context.Context,
 	tokenResp *oid4vci.TokenResponse,
@@ -759,7 +797,20 @@ func (r *VerifiableCredentialRequestReconciler) buildCredentialRequest(
 
 	if holderKey != nil {
 		log := logf.FromContext(ctx)
-		proofJWT, err := oid4vci.GenerateProofJWT(holderKey, issuer.Spec.IssuerURL, tokenResp.CNonce, vcReq.Spec.HolderDID)
+		proofAudience := issuer.Status.IssuerIdentifier
+		if proofAudience == "" {
+			proofAudience = issuer.Spec.IssuerURL
+		}
+		cNonce := tokenResp.CNonce
+		if cNonce == "" && issuer.Status.NonceEndpoint != "" {
+			var nonceErr error
+			cNonce, nonceErr = r.OID4VCIClient.FetchNonce(ctx, issuer.Status.NonceEndpoint, tokenResp.AccessToken)
+			if nonceErr != nil {
+				log.Error(nonceErr, "Failed to fetch nonce from nonce endpoint")
+				return oid4vci.CredentialRequest{}, fmt.Errorf("failed to fetch nonce: %w", nonceErr)
+			}
+		}
+		proofJWT, err := oid4vci.GenerateProofJWT(holderKey, proofAudience, cNonce, vcReq.Spec.HolderDID)
 		if err != nil {
 			log.Error(err, "Failed to generate proof-of-possession JWT")
 			return oid4vci.CredentialRequest{}, fmt.Errorf("failed to generate proof JWT: %w", err)

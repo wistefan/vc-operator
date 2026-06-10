@@ -232,7 +232,9 @@ func (r *CredentialIssuerReconciler) handleMetadataSuccess(
 
 	// Update status fields with discovered metadata.
 	now := metav1.Now()
+	issuer.Status.IssuerIdentifier = metadata.CredentialIssuer
 	issuer.Status.CredentialEndpoint = metadata.CredentialEndpoint
+	issuer.Status.NonceEndpoint = metadata.NonceEndpoint
 	issuer.Status.TokenEndpoint = tokenEndpoint
 	issuer.Status.SupportedCredentialTypes = supportedTypes
 	issuer.Status.LastMetadataFetchTime = &now

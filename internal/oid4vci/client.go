@@ -33,6 +33,11 @@ type Client interface {
 	// obtained from CreateCredentialOffer. The issuerURL is used to construct
 	// the internal offer retrieval URL.
 	FetchCredentialOffer(ctx context.Context, issuerURL, nonce string) (*CredentialOffer, error)
+
+	// FetchNonce obtains a fresh c_nonce from the issuer's nonce endpoint
+	// (OID4VCI draft 15+/Keycloak 26.x). The returned nonce is used in
+	// proof-of-possession JWTs when the token response does not include one.
+	FetchNonce(ctx context.Context, nonceEndpoint, accessToken string) (string, error)
 }
 
 // ClientOption is a functional option for configuring an oid4vciClient.

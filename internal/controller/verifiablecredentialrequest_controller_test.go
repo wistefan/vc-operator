@@ -794,11 +794,18 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 	})
 
 	Context("happy path: credential renewal (second issuance)", func() {
+		var fakeClock *FakeClock
+
 		BeforeEach(func() {
 			createReadyIssuer(ctx)
 			createAuthSecret(ctx)
 			createVCRequest(ctx)
-			setupHappyPath()
+
+			fakeClock = &FakeClock{
+				CurrentTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			}
+			reconciler.Clock = fakeClock
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
 		})
 
 		AfterEach(func() {
@@ -818,6 +825,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(status.LastIssuanceTime).NotTo(BeNil())
 			// First issuance should NOT set LastRenewalTime.
 			Expect(status.LastRenewalTime).To(BeNil())
+
+			// Advance clock past the renewal time (expiry 13:00, renewBefore 5m → renewal at 12:55).
+			fakeClock.SetTime(time.Date(2026, 6, 1, 12, 56, 0, 0, time.UTC))
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
 
 			// Second reconciliation — renewal.
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
@@ -839,6 +850,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			var event string
 			Expect(eventRecorder.Events).Should(Receive(&event))
 
+			// Advance clock past the renewal time.
+			fakeClock.SetTime(time.Date(2026, 6, 1, 12, 56, 0, 0, time.UTC))
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+
 			// Second reconciliation — renewal.
 			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -857,6 +872,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			status := getVCRequestStatus(ctx)
 			Expect(status.RenewalCount).To(Equal(int32(0)))
 
+			// Advance clock past the renewal time for first renewal.
+			fakeClock.SetTime(time.Date(2026, 6, 1, 12, 56, 0, 0, time.UTC))
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+
 			// Second reconciliation — first renewal.
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -865,6 +884,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 			status = getVCRequestStatus(ctx)
 			Expect(status.RenewalCount).To(Equal(int32(1)))
+
+			// Advance clock past the renewal time for second renewal.
+			fakeClock.SetTime(time.Date(2026, 6, 1, 13, 52, 0, 0, time.UTC))
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
 
 			// Third reconciliation — second renewal.
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
@@ -1169,8 +1192,8 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Advance clock to 12:50 UTC (close to renewal time 12:55).
-			fakeClock.Advance(50 * time.Minute)
+			// Advance clock past renewal time (12:55) to trigger re-issuance.
+			fakeClock.Advance(56 * time.Minute)
 			// Set up new credential for second reconciliation.
 			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
 
@@ -1178,8 +1201,8 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// New credential expires at 13:50, renewBefore 5m, renewal at 13:45.
-			// Requeue = 13:45 - 12:50 = 55 minutes.
+			// New credential expires at 13:56, renewBefore 5m, renewal at 13:51.
+			// Requeue = 13:51 - 12:56 = 55 minutes.
 			Expect(result.RequeueAfter).To(Equal(55 * time.Minute))
 		})
 
@@ -1262,12 +1285,18 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 
 	Context("Prometheus metrics: renewal", func() {
 		var testMetrics *VCRequestMetrics
+		var fakeClock *FakeClock
 
 		BeforeEach(func() {
 			createReadyIssuer(ctx)
 			createAuthSecret(ctx)
 			createVCRequest(ctx)
-			setupHappyPath()
+
+			fakeClock = &FakeClock{
+				CurrentTime: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			}
+			reconciler.Clock = fakeClock
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
 
 			testMetrics = NewVCRequestMetrics()
 			reconciler.Metrics = testMetrics
@@ -1286,6 +1315,10 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			// Advance clock past renewal time to trigger re-issuance.
+			fakeClock.SetTime(time.Date(2026, 6, 1, 12, 56, 0, 0, time.UTC))
+			setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+
 			// Second reconciliation — renewal.
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -1300,12 +1333,21 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 		})
 
 		It("should accumulate renewal count over multiple renewals", func() {
-			// Initial + 3 renewals.
-			for range 4 {
+			// Initial issuance + 3 renewals, advancing clock each time.
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			for i := range 3 {
+				fakeClock.Advance(56 * time.Minute)
+				setupHappyPathWithClock(fakeClock.CurrentTime, 1*time.Hour)
+
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: typeNamespacedName,
 				})
 				Expect(err).NotTo(HaveOccurred())
+				_ = i
 			}
 
 			issued := getCounterValue(testMetrics.CredentialsIssuedTotal, vcReqNs, vcReqName, credType)
@@ -1699,6 +1741,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 			Expect(capturedReq.Proof.JWT).NotTo(BeEmpty())
 		})
 	})
+
 
 	Context("holder key binding: error cases", func() {
 		const holderKeySecretName = "test-holder-key-err"

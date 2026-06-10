@@ -60,10 +60,23 @@ type CredentialIssuerSpec struct {
 // CredentialIssuerStatus defines the observed state of a CredentialIssuer.
 // It contains the discovered metadata endpoints and standard Kubernetes conditions.
 type CredentialIssuerStatus struct {
+	// IssuerIdentifier is the credential_issuer value from the OID4VCI metadata.
+	// This is the canonical issuer identifier used as the audience in proof JWTs
+	// and may differ from spec.issuerURL when the issuer is accessed via an
+	// internal URL but identifies itself with an external URL.
+	// +optional
+	IssuerIdentifier string `json:"issuerIdentifier,omitempty"`
+
 	// CredentialEndpoint is the credential endpoint URL discovered from
 	// the issuer's OID4VCI metadata.
 	// +optional
 	CredentialEndpoint string `json:"credentialEndpoint,omitempty"`
+
+	// NonceEndpoint is the nonce endpoint URL discovered from the issuer's
+	// OID4VCI metadata (draft 15+/Keycloak 26.x). When present, the operator
+	// fetches a fresh nonce from this endpoint for proof-of-possession JWTs.
+	// +optional
+	NonceEndpoint string `json:"nonceEndpoint,omitempty"`
 
 	// TokenEndpoint is the token endpoint URL discovered from
 	// the issuer's OID4VCI metadata or overridden by spec.tokenURL.
