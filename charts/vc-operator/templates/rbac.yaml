@@ -1,8 +1,35 @@
 {{- if .Values.rbac.create -}}
+{{- if .Values.watchNamespaces }}
+{{- range $ns := .Values.watchNamespaces }}
 ---
-# ClusterRole: manager-role
-# Grants the operator permissions to manage CredentialIssuers,
-# VerifiableCredentialRequests, Secrets, and Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vc-operator.fullname" $ }}-manager-role
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vc-operator.labels" $ | nindent 4 }}
+rules:
+  {{- include "vc-operator.managerRules" $ | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vc-operator.fullname" $ }}-manager-rolebinding
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vc-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vc-operator.fullname" $ }}-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vc-operator.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- else }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -10,60 +37,8 @@ metadata:
   labels:
     {{- include "vc-operator.labels" . | nindent 4 }}
 rules:
-  # Permission to create and patch Events for recording state transitions.
-  - apiGroups:
-      - events.k8s.io
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
-  # Permission to manage Secrets used for storing obtained credentials
-  # and reading authentication credentials for issuers.
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  # Permission to manage CredentialIssuer and VerifiableCredentialRequest CRs.
-  - apiGroups:
-      - vc.vc-operator.io
-    resources:
-      - credentialissuers
-      - verifiablecredentialrequests
-    verbs:
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  # Permission to update finalizers on managed CRs.
-  - apiGroups:
-      - vc.vc-operator.io
-    resources:
-      - credentialissuers/finalizers
-      - verifiablecredentialrequests/finalizers
-    verbs:
-      - update
-  # Permission to read and update status subresources on managed CRs.
-  - apiGroups:
-      - vc.vc-operator.io
-    resources:
-      - credentialissuers/status
-      - verifiablecredentialrequests/status
-    verbs:
-      - get
-      - patch
-      - update
+  {{- include "vc-operator.managerRules" . | nindent 2 }}
 ---
-# ClusterRoleBinding: binds the manager-role to the operator service account.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -78,6 +53,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "vc-operator.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 ---
 # Role: leader-election-role
 # Grants permissions for leader election using ConfigMaps and Leases.

@@ -91,6 +91,22 @@ crds:
   # -- Whether to install CRDs with the Helm chart.
   install: true
 
+# -- Restrict the operator to watch only the listed namespaces.
+# When empty, the operator watches all namespaces (cluster-scoped).
+# Example:
+#   watchNamespaces:
+#     - my-namespace
+watchNamespaces: []
+
+# -- Extra environment variables to set on the manager container.
+extraEnvVars: []
+
+# -- Extra volume mounts to add to the manager container.
+extraVolumeMounts: []
+
+# -- Extra volumes to add to the pod.
+extraVolumes: []
+
 # -- Node selector for pod scheduling.
 nodeSelector: {}
 

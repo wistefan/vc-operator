@@ -70,3 +70,55 @@ Container image reference combining repository and tag.
 {{- $tag := default .Chart.AppVersion .Values.image.tag }}
 {{- printf "%s:%s" .Values.image.repository $tag }}
 {{- end }}
+
+{{/*
+Manager RBAC rules shared between ClusterRole and namespace-scoped Role.
+*/}}
+{{- define "vc-operator.managerRules" -}}
+- apiGroups:
+    - events.k8s.io
+  resources:
+    - events
+  verbs:
+    - create
+    - patch
+- apiGroups:
+    - ""
+  resources:
+    - secrets
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - vc.vc-operator.io
+  resources:
+    - credentialissuers
+    - verifiablecredentialrequests
+  verbs:
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - vc.vc-operator.io
+  resources:
+    - credentialissuers/finalizers
+    - verifiablecredentialrequests/finalizers
+  verbs:
+    - update
+- apiGroups:
+    - vc.vc-operator.io
+  resources:
+    - credentialissuers/status
+    - verifiablecredentialrequests/status
+  verbs:
+    - get
+    - patch
+    - update
+{{- end }}
