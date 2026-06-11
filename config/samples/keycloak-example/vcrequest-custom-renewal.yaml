@@ -1,0 +1,29 @@
+# VerifiableCredentialRequest with a custom renewal interval.
+#
+# This example sets renewBefore to 1 hour, meaning the operator will start
+# attempting to renew the credential 1 hour before it expires. This is
+# useful for long-lived credentials where you want a larger safety margin,
+# or when the issuer may experience occasional downtime.
+apiVersion: vc.vc-operator.io/v1alpha1
+kind: VerifiableCredentialRequest
+metadata:
+  name: vc-request-custom-renewal
+  labels:
+    app.kubernetes.io/name: vc-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  issuerRef:
+    name: keycloak-issuer
+
+  credentialType: "VerifiableCredential"
+  format: jwt_vc_json
+  storageType: kubernetes
+
+  targetSecretRef:
+    name: my-service-vc-custom-renewal
+    key: credential
+
+  # Renew 1 hour before expiry instead of the default 5 minutes.
+  # This gives the operator more retry attempts if the issuer is temporarily
+  # unavailable near the credential's expiry time.
+  renewBefore: 1h

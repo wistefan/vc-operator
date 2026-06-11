@@ -1,0 +1,117 @@
+# Default values for vc-operator.
+
+# -- Number of operator replicas. Use >1 with leaderElection enabled for HA.
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: quay.io/seamware/vc-operator
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# -- Image pull secrets for private registries.
+imagePullSecrets: []
+
+# -- Override the release name.
+nameOverride: ""
+# -- Override the full release name.
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a ServiceAccount.
+  create: true
+  # -- Annotations to add to the ServiceAccount.
+  annotations: {}
+  # -- The name of the ServiceAccount to use. If not set and create is true,
+  # a name is generated using the fullname template.
+  name: ""
+
+# -- Pod-level annotations.
+podAnnotations: {}
+
+# -- Pod-level labels.
+podLabels: {}
+
+# -- Pod security context (applied to the pod spec).
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context (applied to the manager container).
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - "ALL"
+
+# -- Container resource requests and limits.
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+leaderElection:
+  # -- Enable leader election for controller manager.
+  # Enabling this ensures there is only one active controller manager.
+  enabled: true
+
+healthProbe:
+  # -- Bind address for health probe endpoint.
+  bindAddress: ":8081"
+
+metrics:
+  # -- Bind address for metrics endpoint. Use "0" to disable.
+  bindAddress: ":8443"
+  # -- Whether the metrics endpoint is served securely via HTTPS.
+  secure: true
+  service:
+    # -- Whether to create a Service for the metrics endpoint.
+    enabled: true
+    # -- Service type for the metrics service.
+    type: ClusterIP
+    # -- Service port for the metrics endpoint.
+    port: 8443
+
+logging:
+  # -- Enable development mode logging (human-readable, debug-level).
+  development: false
+
+rbac:
+  # -- Whether to create RBAC resources (ClusterRole, ClusterRoleBinding).
+  create: true
+
+crds:
+  # -- Whether to install CRDs with the Helm chart.
+  install: true
+
+# -- Restrict the operator to watch only the listed namespaces.
+# When empty, the operator watches all namespaces (cluster-scoped).
+# Example:
+#   watchNamespaces:
+#     - my-namespace
+watchNamespaces: []
+
+# -- Extra environment variables to set on the manager container.
+extraEnvVars: []
+
+# -- Extra volume mounts to add to the manager container.
+extraVolumeMounts: []
+
+# -- Extra volumes to add to the pod.
+extraVolumes: []
+
+# -- Node selector for pod scheduling.
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling.
+tolerations: []
+
+# -- Affinity rules for pod scheduling.
+affinity: {}
