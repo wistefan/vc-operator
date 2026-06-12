@@ -49,9 +49,10 @@ const (
 	// backoff when transient OID4VCI errors occur.
 	TransientErrorBaseRequeueInterval = 10 * time.Second
 
-	// ConfigErrorRequeueInterval is the interval to wait before retrying
-	// reconciliation after a non-transient configuration error.
-	ConfigErrorRequeueInterval = 1 * time.Minute
+	// DefaultConfigErrorRequeueInterval is the default interval to wait before
+	// retrying reconciliation after a non-transient configuration error. Can be
+	// overridden per-reconciler via the ConfigErrorRequeueInterval field.
+	DefaultConfigErrorRequeueInterval = 1 * time.Minute
 
 	// ActionResolveIssuer is the event action recorded when the controller
 	// resolves the referenced CredentialIssuer for a VerifiableCredentialRequest.
@@ -105,6 +106,20 @@ type VerifiableCredentialRequestReconciler struct {
 	// Metrics holds Prometheus metric collectors for tracking credential
 	// issuance, renewal, errors, and expiry. If nil, metrics are not recorded.
 	Metrics *VCRequestMetrics
+
+	// ConfigErrorRequeueInterval overrides the default interval between retries
+	// after a non-transient configuration error. When zero,
+	// DefaultConfigErrorRequeueInterval is used.
+	ConfigErrorRequeueInterval time.Duration
+}
+
+// configErrorRequeueInterval returns the configured config error requeue
+// interval, falling back to DefaultConfigErrorRequeueInterval when not set.
+func (r *VerifiableCredentialRequestReconciler) configErrorRequeueInterval() time.Duration {
+	if r.ConfigErrorRequeueInterval > 0 {
+		return r.ConfigErrorRequeueInterval
+	}
+	return DefaultConfigErrorRequeueInterval
 }
 
 // now returns the current time from the injected Clock, falling back to
@@ -463,7 +478,7 @@ func (r *VerifiableCredentialRequestReconciler) handleAuthError(
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonAuthSecretNotFound, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	return ctrl.Result{RequeueAfter: ConfigErrorRequeueInterval}, nil
+	return ctrl.Result{RequeueAfter: r.configErrorRequeueInterval()}, nil
 }
 
 // handleTokenError handles failures from the token endpoint. Token errors are
@@ -525,7 +540,7 @@ func (r *VerifiableCredentialRequestReconciler) handlePermanentError(
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, reason, message); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	return ctrl.Result{RequeueAfter: ConfigErrorRequeueInterval}, nil
+	return ctrl.Result{RequeueAfter: r.configErrorRequeueInterval()}, nil
 }
 
 // handleStorageError handles failures from the CredentialStore backend.
@@ -897,7 +912,7 @@ func (r *VerifiableCredentialRequestReconciler) handleHolderKeyError(
 	if statusErr := r.setVCRequestErrorStatus(ctx, vcReq, vcv1alpha1.ReasonHolderKeyInvalid, msg); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	return ctrl.Result{RequeueAfter: ConfigErrorRequeueInterval}, nil
+	return ctrl.Result{RequeueAfter: r.configErrorRequeueInterval()}, nil
 }
 
 // handleCredentialOfferError handles failures from the credential offer flow.

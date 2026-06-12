@@ -224,7 +224,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultErrorRequeueInterval))
 
 			status := getIssuerStatus(ctx, issuerName)
 
@@ -273,7 +273,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultErrorRequeueInterval))
 
 			status := getIssuerStatus(ctx, issuerName)
 
@@ -321,7 +321,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultErrorRequeueInterval))
 
 			status := getIssuerStatus(ctx, issuerName)
 			readyCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeReady)
@@ -352,7 +352,7 @@ var _ = Describe("CredentialIssuer Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultErrorRequeueInterval))
 
 			status := getIssuerStatus(ctx, issuerName)
 			readyCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeReady)

@@ -22,6 +22,7 @@ import (
 	"flag"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -67,6 +68,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var watchNamespaces string
+	var errorRequeueInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -87,6 +89,9 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.DurationVar(&errorRequeueInterval, "error-requeue-interval", controller.DefaultErrorRequeueInterval,
+		"Interval to wait before retrying reconciliation after a non-transient error. "+
+			"Lower values speed up recovery in test environments.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -202,10 +207,11 @@ func main() {
 	}
 
 	if err := (&controller.CredentialIssuerReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		OID4VCIClient: oid4vci.NewClient(),
-		EventRecorder: mgr.GetEventRecorder("credentialissuer-controller"),
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		OID4VCIClient:        oid4vci.NewClient(),
+		EventRecorder:        mgr.GetEventRecorder("credentialissuer-controller"),
+		ErrorRequeueInterval: errorRequeueInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "credentialissuer")
 		os.Exit(1)
@@ -215,13 +221,14 @@ func main() {
 	controller.RegisterMetrics(vcRequestMetrics)
 
 	if err := (&controller.VerifiableCredentialRequestReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		OID4VCIClient:   oid4vci.NewClient(),
-		CredentialStore: kubestore.NewSecretStore(mgr.GetClient()),
-		EventRecorder:   mgr.GetEventRecorder("vcrequest-controller"),
-		Clock:           controller.RealClock{},
-		Metrics:         vcRequestMetrics,
+		Client:                     mgr.GetClient(),
+		Scheme:                     mgr.GetScheme(),
+		OID4VCIClient:              oid4vci.NewClient(),
+		CredentialStore:            kubestore.NewSecretStore(mgr.GetClient()),
+		EventRecorder:              mgr.GetEventRecorder("vcrequest-controller"),
+		Clock:                      controller.RealClock{},
+		Metrics:                    vcRequestMetrics,
+		ConfigErrorRequeueInterval: errorRequeueInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "verifiablecredentialrequest")
 		os.Exit(1)

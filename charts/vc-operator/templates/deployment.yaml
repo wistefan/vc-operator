@@ -54,6 +54,9 @@ spec:
             {{- if .Values.watchNamespaces }}
             - --watch-namespaces={{ join "," .Values.watchNamespaces }}
             {{- end }}
+            {{- if .Values.errorRequeueInterval }}
+            - --error-requeue-interval={{ .Values.errorRequeueInterval }}
+            {{- end }}
           {{- with .Values.extraEnvVars }}
           env:
             {{- toYaml . | nindent 12 }}
