@@ -91,6 +91,11 @@ crds:
   # -- Whether to install CRDs with the Helm chart.
   install: true
 
+# -- Interval to wait before retrying reconciliation after a non-transient error.
+# Lower values (e.g., "5s") speed up recovery in test environments.
+# Accepts Go duration strings: "5s", "30s", "1m", etc.
+errorRequeueInterval: "1m"
+
 # -- Restrict the operator to watch only the listed namespaces.
 # When empty, the operator watches all namespaces (cluster-scoped).
 # Example:

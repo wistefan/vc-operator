@@ -479,7 +479,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			readyCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeReady)
@@ -639,7 +639,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
@@ -1871,7 +1871,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
@@ -1903,7 +1903,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
@@ -1945,7 +1945,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
@@ -1988,7 +1988,7 @@ var _ = Describe("VerifiableCredentialRequest Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(ConfigErrorRequeueInterval))
+			Expect(result.RequeueAfter).To(Equal(DefaultConfigErrorRequeueInterval))
 
 			status := getVCRequestStatus(ctx)
 			errorCondition := meta.FindStatusCondition(status.Conditions, vcv1alpha1.ConditionTypeError)
