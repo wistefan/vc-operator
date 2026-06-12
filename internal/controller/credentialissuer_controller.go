@@ -43,9 +43,11 @@ const (
 	// metadata refresh cycles for a healthy CredentialIssuer.
 	MetadataRefreshInterval = 30 * time.Minute
 
-	// ErrorRequeueInterval is the interval to wait before retrying reconciliation
-	// after a non-transient configuration error (e.g., missing auth Secret).
-	ErrorRequeueInterval = 1 * time.Minute
+	// DefaultErrorRequeueInterval is the default interval to wait before retrying
+	// reconciliation after a non-transient configuration error (e.g., missing
+	// auth Secret). Can be overridden per-reconciler via the ErrorRequeueInterval
+	// field.
+	DefaultErrorRequeueInterval = 1 * time.Minute
 
 	// AuthSecretKeyClientID is the expected data key in the authentication Secret
 	// containing the OAuth 2.0 client identifier.
@@ -78,6 +80,20 @@ type CredentialIssuerReconciler struct {
 	Scheme        *runtime.Scheme
 	OID4VCIClient oid4vci.Client
 	EventRecorder events.EventRecorder
+
+	// ErrorRequeueInterval overrides the default interval between retries after
+	// a non-transient configuration error. When zero, DefaultErrorRequeueInterval
+	// is used.
+	ErrorRequeueInterval time.Duration
+}
+
+// errorRequeueInterval returns the configured error requeue interval,
+// falling back to DefaultErrorRequeueInterval when not set.
+func (r *CredentialIssuerReconciler) errorRequeueInterval() time.Duration {
+	if r.ErrorRequeueInterval > 0 {
+		return r.ErrorRequeueInterval
+	}
+	return DefaultErrorRequeueInterval
 }
 
 // +kubebuilder:rbac:groups=vc.vc-operator.io,resources=credentialissuers,verbs=get;list;watch;update;patch
@@ -118,7 +134,7 @@ func (r *CredentialIssuerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		// Auth validation errors are configuration issues; requeue after a fixed
 		// interval rather than exponential backoff, since there is no benefit to
 		// backing off on user-correctable errors.
-		return ctrl.Result{RequeueAfter: ErrorRequeueInterval}, nil
+		return ctrl.Result{RequeueAfter: r.errorRequeueInterval()}, nil
 	}
 
 	// Discover OID4VCI metadata from the issuer URL.
