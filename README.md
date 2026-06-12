@@ -1,7 +1,6 @@
 # vc-operator
 
-A Kubernetes operator that manages Verifiable Credentials (VCs) for services in
-[FIWARE](https://www.fiware.org/)-ecosystem deployments. It obtains credentials
+A Kubernetes operator that manages Verifiable Credentials (VCs). It obtains credentials
 via [OID4VCI](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html)
 (OpenID for Verifiable Credential Issuance), stores them as Kubernetes Secrets,
 and automatically renews them before expiry.
